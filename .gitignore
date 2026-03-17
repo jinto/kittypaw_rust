@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+dist/
+*.egg-info/
+
+# uv
+.python-version
+
+# CDK
+cdk.out/
+.cdk.staging/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Node (frontend)
+node_modules/
+.next/
+out/
+
+# Reference materials
+pensieve/
+
+# Test
+.pytest_cache/
+.mypy_cache/
+htmlcov/
+.coverage
