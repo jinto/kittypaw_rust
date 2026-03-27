@@ -284,11 +284,11 @@ fn filter_skill_calls(
     // Find the agent config whose id matches or whose channels match the agent_id prefix
     let agent_config = agents.iter().find(|a| {
         a.id == agent_id
-            || agent_id.starts_with(&format!("telegram-"))
+            || agent_id.starts_with(&"telegram-".to_string())
                 && a.channels.contains(&"telegram".to_string())
-            || agent_id.starts_with(&format!("discord-"))
+            || agent_id.starts_with(&"discord-".to_string())
                 && a.channels.contains(&"discord".to_string())
-            || agent_id.starts_with(&format!("web-"))
+            || agent_id.starts_with(&"web-".to_string())
                 && a.channels.contains(&"web".to_string())
     });
 

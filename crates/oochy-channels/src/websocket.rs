@@ -232,7 +232,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         let text = incoming.text.unwrap_or_default();
         let session_id = incoming
             .session_id
-            .unwrap_or_else(|| uuid_v4());
+            .unwrap_or_else(uuid_v4);
 
         // Register session -> sender on first message.
         if let Some(tx) = session_id_tx.take() {
