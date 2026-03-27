@@ -121,7 +121,7 @@ pub async fn run_agent_loop(
                 let allowed_calls = filter_skill_calls(&exec_result.skill_calls, &config.agents, &agent_id);
                 let skill_results = crate::skill_executor::execute_skill_calls(
                     &allowed_calls,
-                    &config,
+                    config,
                 )
                 .instrument(info_span!("skill_execute"))
                 .await;
