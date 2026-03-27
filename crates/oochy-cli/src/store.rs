@@ -84,6 +84,7 @@ impl Store {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn recent_turns(&self, agent_id: &str, n: usize) -> Result<Vec<ConversationTurn>> {
         let mut stmt = self
             .conn
