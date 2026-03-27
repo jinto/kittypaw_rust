@@ -1,3 +1,4 @@
+#[cfg(target_os = "macos")]
 use std::ffi::CString;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -8,6 +9,7 @@ use rquickjs::function::Rest;
 use rquickjs::prelude::Async;
 use rquickjs::{async_with, AsyncContext, AsyncRuntime, Function, Object, Value};
 
+#[cfg(target_os = "macos")]
 const SEATBELT_PROFILE: &str = r#"
 (version 1)
 (deny default)
