@@ -25,3 +25,4 @@ atty = "0.2"
 url = "2"
 chrono = { version = "0.4", features = ["serde"] }
 cron = "0.16"
+toml = "0.8"

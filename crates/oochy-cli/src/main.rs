@@ -53,6 +53,8 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Initialize Oochy configuration
+    Init,
 }
 
 #[derive(Subcommand)]
@@ -73,6 +75,11 @@ enum SkillsCommands {
     Explain {
         /// Name of the skill to explain
         name: String,
+    },
+    /// Import a skill from a local directory
+    Import {
+        /// Path to directory containing .skill.toml and .js files
+        path: String,
     },
 }
 
@@ -128,10 +135,14 @@ async fn main() {
                 SkillsCommands::Disable { name } => run_skills_disable(&name),
                 SkillsCommands::Delete { name } => run_skills_delete(&name),
                 SkillsCommands::Explain { name } => run_skills_explain(&name).await,
+                SkillsCommands::Import { path } => run_skills_import(&path),
             }
         }
         Some(Commands::Run { name, dry_run }) => {
             run_skill_cli(&name, dry_run).await;
+        }
+        Some(Commands::Init) => {
+            run_init();
         }
         None => {
             run_stdin().await;
@@ -739,6 +750,211 @@ async fn run_teach_cli(description: &str) {
             }
         }
     }
+}
+
+fn run_skills_import(path: &str) {
+    let dir = std::path::Path::new(path);
+    if !dir.is_dir() {
+        eprintln!("Error: '{path}' is not a directory");
+        std::process::exit(1);
+    }
+
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("Error reading directory: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let mut toml_files: Vec<std::path::PathBuf> = Vec::new();
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let path = entry.path();
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            if name.ends_with(".skill.toml") {
+                toml_files.push(path);
+            }
+        }
+    }
+
+    if toml_files.is_empty() {
+        println!("No .skill.toml files found in '{path}'.");
+        return;
+    }
+
+    let mut imported = 0u32;
+    for toml_path in &toml_files {
+        let toml_content = match std::fs::read_to_string(toml_path) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Failed to read {}: {e}", toml_path.display());
+                continue;
+            }
+        };
+
+        let skill: oochy_core::skill::Skill = match toml::from_str(&toml_content) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Invalid TOML in {}: {e}", toml_path.display());
+                continue;
+            }
+        };
+
+        // Derive JS file path from the TOML file name
+        let file_stem = toml_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .trim_end_matches(".skill.toml");
+        let js_path = toml_path.with_file_name(format!("{file_stem}.js"));
+
+        if !js_path.exists() {
+            eprintln!(
+                "Warning: No JS file found for skill '{}' (expected {})",
+                skill.name,
+                js_path.display()
+            );
+            continue;
+        }
+
+        let perms = skill.permissions.primitives.join(", ");
+        let trigger_info = match skill.trigger.trigger_type.as_str() {
+            "message" => format!(
+                "message (keyword: {})",
+                skill.trigger.keyword.as_deref().unwrap_or("none")
+            ),
+            "schedule" => format!(
+                "schedule ({})",
+                skill
+                    .trigger
+                    .cron
+                    .as_deref()
+                    .or(skill.trigger.natural.as_deref())
+                    .unwrap_or("none")
+            ),
+            other => other.to_string(),
+        };
+
+        println!(
+            "\nSkill: '{}' | Trigger: {} | Permissions: [{}]",
+            skill.name, trigger_info, perms
+        );
+        eprint!("Import skill '{}' with permissions [{}]? (y/n) ", skill.name, perms);
+
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input).unwrap_or_default();
+        let choice = input.trim().to_lowercase();
+
+        if choice != "y" && choice != "yes" {
+            println!("Skipped '{}'.", skill.name);
+            continue;
+        }
+
+        let js_code = match std::fs::read_to_string(&js_path) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Failed to read {}: {e}", js_path.display());
+                continue;
+            }
+        };
+
+        match oochy_core::skill::save_skill(&skill, &js_code) {
+            Ok(()) => {
+                println!("Imported '{}'.", skill.name);
+                imported += 1;
+            }
+            Err(e) => {
+                eprintln!("Failed to import '{}': {e}", skill.name);
+            }
+        }
+    }
+
+    println!("\nImported {imported} skills.");
+}
+
+fn run_init() {
+    let config_path = std::path::Path::new("oochy.toml");
+
+    if config_path.exists() {
+        eprint!("oochy.toml already exists. Overwrite? (y/n) ");
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input).unwrap_or_default();
+        let choice = input.trim().to_lowercase();
+        if choice != "y" && choice != "yes" {
+            println!("Aborted.");
+            return;
+        }
+    }
+
+    // Prompt for API key
+    eprint!("Enter your Claude API key (sk-ant-...): ");
+    let mut api_key = String::new();
+    std::io::stdin().read_line(&mut api_key).unwrap_or_default();
+    let api_key = api_key.trim().to_string();
+
+    if api_key.is_empty() {
+        eprintln!("Warning: No API key provided. Set OOCHY_API_KEY env var before running.");
+    }
+
+    // Prompt for Telegram token
+    eprint!("Enter Telegram bot token (optional, press Enter to skip): ");
+    let mut telegram_token = String::new();
+    std::io::stdin().read_line(&mut telegram_token).unwrap_or_default();
+    let telegram_token = telegram_token.trim().to_string();
+
+    // Build config content
+    let mut content = format!(
+        r#"[llm]
+provider = "claude"
+api_key = "{api_key}"
+model = "claude-sonnet-4-20250514"
+max_tokens = 4096
+
+[sandbox]
+timeout_secs = 30
+memory_limit_mb = 64
+
+# Teach settings
+admin_chat_ids = []
+freeform_fallback = false
+"#
+    );
+
+    if !telegram_token.is_empty() {
+        content.push_str(&format!(
+            r#"
+[[channels]]
+channel_type = "telegram"
+token = "{telegram_token}"
+"#
+        ));
+    }
+
+    if let Err(e) = std::fs::write(config_path, &content) {
+        eprintln!("Failed to write oochy.toml: {e}");
+        std::process::exit(1);
+    }
+
+    // Create skills directory
+    let skills_dir = std::path::Path::new(".oochy/skills");
+    if let Err(e) = std::fs::create_dir_all(skills_dir) {
+        eprintln!("Failed to create .oochy/skills/: {e}");
+        std::process::exit(1);
+    }
+
+    println!(
+        r#"
+Oochy initialized!
+
+Next steps:
+  oochy teach "send me a daily joke"    # Teach a new skill
+  oochy serve                            # Start the bot server
+  oochy skills list                      # View taught skills"#
+    );
 }
 
 async fn run_stdin() {
