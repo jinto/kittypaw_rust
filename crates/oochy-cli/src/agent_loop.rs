@@ -116,19 +116,22 @@ pub async fn run_agent_loop(
             // Execute captured skill calls on the host (real API calls)
             if !exec_result.skill_calls.is_empty() {
                 tracing::info!("Executing {} skill calls", exec_result.skill_calls.len());
-                let allowed_calls = filter_skill_calls(&exec_result.skill_calls, &config.agents, &agent_id);
-                let skill_results = crate::skill_executor::execute_skill_calls(
-                    &allowed_calls,
-                    config,
-                    None,
-                )
-                .instrument(info_span!("skill_execute"))
-                .await;
+                let allowed_calls =
+                    filter_skill_calls(&exec_result.skill_calls, &config.agents, &agent_id);
+                let skill_results =
+                    crate::skill_executor::execute_skill_calls(&allowed_calls, config, None)
+                        .instrument(info_span!("skill_execute"))
+                        .await;
                 match &skill_results {
                     Ok(results) => {
                         for r in results {
                             if !r.success {
-                                tracing::warn!("Skill {}.{} failed: {:?}", r.skill_name, r.method, r.error);
+                                tracing::warn!(
+                                    "Skill {}.{} failed: {:?}",
+                                    r.skill_name,
+                                    r.method,
+                                    r.error
+                                );
                             }
                         }
                     }
@@ -230,14 +233,23 @@ fn format_event(event: &Event) -> String {
     let payload = &event.payload;
     match event.event_type {
         EventType::Telegram => {
-            let user = payload.get("from_name").and_then(|v| v.as_str()).unwrap_or("User");
+            let user = payload
+                .get("from_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("User");
             let text = payload.get("text").and_then(|v| v.as_str()).unwrap_or("");
-            let chat_id = payload.get("chat_id").and_then(|v| v.as_str()).unwrap_or("");
+            let chat_id = payload
+                .get("chat_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             format!("[Telegram] {user} (chat_id={chat_id}): {text}")
         }
         EventType::WebChat => {
             let text = payload.get("text").and_then(|v| v.as_str()).unwrap_or("");
-            let session = payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+            let session = payload
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             format!("[WebChat] (session={session}): {text}")
         }
     }
@@ -259,13 +271,23 @@ fn format_exec_result(result: &ExecutionResult) -> String {
 fn agent_id_for_event(event: &Event) -> String {
     match event.event_type {
         EventType::Telegram => {
-            let chat_id = event.payload.get("chat_id")
-                .map(|v| v.as_str().map(|s| s.to_string()).unwrap_or_else(|| v.to_string()))
+            let chat_id = event
+                .payload
+                .get("chat_id")
+                .map(|v| {
+                    v.as_str()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| v.to_string())
+                })
                 .unwrap_or_else(|| "default".to_string());
             format!("telegram-{chat_id}")
         }
         EventType::WebChat => {
-            let session = event.payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("default");
+            let session = event
+                .payload
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
             format!("web-{session}")
         }
     }
@@ -288,7 +310,11 @@ fn filter_skill_calls(
     let Some(config) = agent_config else {
         // Default-deny: no agent config means no skill calls allowed
         if !calls.is_empty() {
-            tracing::warn!("No agent config for '{}' — denying {} skill calls (default-deny)", agent_id, calls.len());
+            tracing::warn!(
+                "No agent config for '{}' — denying {} skill calls (default-deny)",
+                agent_id,
+                calls.len()
+            );
         }
         return vec![];
     };
@@ -299,7 +325,12 @@ fn filter_skill_calls(
         match checker.check(call) {
             Ok(()) => allowed.push(call.clone()),
             Err(e) => {
-                tracing::warn!("Capability check denied {}.{}: {}", call.skill_name, call.method, e);
+                tracing::warn!(
+                    "Capability check denied {}.{}: {}",
+                    call.skill_name,
+                    call.method,
+                    e
+                );
             }
         }
     }

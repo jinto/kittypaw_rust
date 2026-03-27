@@ -114,10 +114,14 @@ async fn main() {
         Some(Commands::Serve { bind }) => {
             run_serve(&bind).await;
         }
-        Some(Commands::Config { command: ConfigCommands::Check }) => {
+        Some(Commands::Config {
+            command: ConfigCommands::Check,
+        }) => {
             run_config_check();
         }
-        Some(Commands::Agent { command: AgentCommands::List }) => {
+        Some(Commands::Agent {
+            command: AgentCommands::List,
+        }) => {
             run_agent_list();
         }
         Some(Commands::Teach { description }) => {
@@ -129,15 +133,13 @@ async fn main() {
             }
             run_teach_cli(&desc).await;
         }
-        Some(Commands::Skills { command }) => {
-            match command {
-                SkillsCommands::List => run_skills_list(),
-                SkillsCommands::Disable { name } => run_skills_disable(&name),
-                SkillsCommands::Delete { name } => run_skills_delete(&name),
-                SkillsCommands::Explain { name } => run_skills_explain(&name).await,
-                SkillsCommands::Import { path } => run_skills_import(&path),
-            }
-        }
+        Some(Commands::Skills { command }) => match command {
+            SkillsCommands::List => run_skills_list(),
+            SkillsCommands::Disable { name } => run_skills_disable(&name),
+            SkillsCommands::Delete { name } => run_skills_delete(&name),
+            SkillsCommands::Explain { name } => run_skills_explain(&name).await,
+            SkillsCommands::Import { path } => run_skills_import(&path),
+        },
         Some(Commands::Run { name, dry_run }) => {
             run_skill_cli(&name, dry_run).await;
         }
@@ -195,7 +197,10 @@ async fn run_serve(bind_addr: &str) {
             std::process::exit(1);
         });
 
-    eprintln!("oochy serve started. WebSocket at ws://{}/ws/chat", bind_addr);
+    eprintln!(
+        "oochy serve started. WebSocket at ws://{}/ws/chat",
+        bind_addr
+    );
     eprintln!("Press Ctrl+C to stop.");
 
     // Spawn schedule evaluator
@@ -442,22 +447,36 @@ fn run_config_check() {
             println!("  Max tokens   : {}", config.llm.max_tokens);
             println!(
                 "  API key      : {}",
-                if config.llm.api_key.is_empty() { "NOT SET" } else { "set" }
+                if config.llm.api_key.is_empty() {
+                    "NOT SET"
+                } else {
+                    "set"
+                }
             );
             println!("  Sandbox timeout : {}s", config.sandbox.timeout_secs);
             println!("  Sandbox memory  : {}MB", config.sandbox.memory_limit_mb);
             println!("  Channels : {}", config.channels.len());
             for ch in &config.channels {
                 let addr = ch.bind_addr.as_deref().unwrap_or("-");
-                println!("    - {} (bind={}, token={})", ch.channel_type, addr,
-                    if ch.token.is_empty() { "not set" } else { "set" });
+                println!(
+                    "    - {} (bind={}, token={})",
+                    ch.channel_type,
+                    addr,
+                    if ch.token.is_empty() {
+                        "not set"
+                    } else {
+                        "set"
+                    }
+                );
             }
             println!("  Agents   : {}", config.agents.len());
             for agent in &config.agents {
                 println!("    - {} ({})", agent.name, agent.id);
             }
             if config.llm.api_key.is_empty() {
-                eprintln!("Warning: API key not set. Set OOCHY_API_KEY or llm.api_key in oochy.toml");
+                eprintln!(
+                    "Warning: API key not set. Set OOCHY_API_KEY or llm.api_key in oochy.toml"
+                );
                 std::process::exit(1);
             }
         }
@@ -481,8 +500,18 @@ fn run_agent_list() {
 
     for agent in &config.agents {
         println!("Agent: {} (id={})", agent.name, agent.id);
-        println!("  System prompt: {}...", &agent.system_prompt.chars().take(60).collect::<String>());
-        println!("  Channels: {}", if agent.channels.is_empty() { "none".to_string() } else { agent.channels.join(", ") });
+        println!(
+            "  System prompt: {}...",
+            &agent.system_prompt.chars().take(60).collect::<String>()
+        );
+        println!(
+            "  Channels: {}",
+            if agent.channels.is_empty() {
+                "none".to_string()
+            } else {
+                agent.channels.join(", ")
+            }
+        );
         if agent.allowed_skills.is_empty() {
             println!("  Skills: none");
         } else {
@@ -493,7 +522,10 @@ fn run_agent_list() {
                 } else {
                     skill.methods.join(", ")
                 };
-                println!("    - {} [{}] (rate: {}/min)", skill.skill, methods, skill.rate_limit_per_minute);
+                println!(
+                    "    - {} [{}] (rate: {}/min)",
+                    skill.skill, methods, skill.rate_limit_per_minute
+                );
             }
         }
     }
@@ -511,10 +543,16 @@ fn run_skills_list() {
         }
         Ok(list) => {
             println!("Skills:");
-            println!("  {:<16} | {:<7} | {:<8} | {:<18} | enabled", "name", "version", "trigger", "schedule");
+            println!(
+                "  {:<16} | {:<7} | {:<8} | {:<18} | enabled",
+                "name", "version", "trigger", "schedule"
+            );
             for (skill, _) in &list {
                 let schedule = if skill.trigger.trigger_type == "schedule" {
-                    skill.trigger.natural.as_deref()
+                    skill
+                        .trigger
+                        .natural
+                        .as_deref()
                         .or(skill.trigger.cron.as_deref())
                         .unwrap_or("—")
                         .to_string()
@@ -631,13 +669,22 @@ async fn run_skill_cli(name: &str, dry_run: bool) {
                                 println!("  {}.{}({:?})", call.skill_name, call.method, call.args);
                             }
                         } else {
-                            match skill_executor::execute_skill_calls(&result.skill_calls, &config, Some(&skill.name)).await {
+                            match skill_executor::execute_skill_calls(
+                                &result.skill_calls,
+                                &config,
+                                Some(&skill.name),
+                            )
+                            .await
+                            {
                                 Ok(results) => {
                                     for r in &results {
                                         if r.success {
                                             println!("  {}.{}: OK", r.skill_name, r.method);
                                         } else {
-                                            eprintln!("  {}.{}: FAILED {:?}", r.skill_name, r.method, r.error);
+                                            eprintln!(
+                                                "  {}.{}: FAILED {:?}",
+                                                r.skill_name, r.method, r.error
+                                            );
                                         }
                                     }
                                 }
@@ -843,7 +890,10 @@ fn run_skills_import(path: &str) {
             "\nSkill: '{}' | Trigger: {} | Permissions: [{}]",
             skill.name, trigger_info, perms
         );
-        eprint!("Import skill '{}' with permissions [{}]? (y/n) ", skill.name, perms);
+        eprint!(
+            "Import skill '{}' with permissions [{}]? (y/n) ",
+            skill.name, perms
+        );
 
         let mut input = String::new();
         std::io::stdin().read_line(&mut input).unwrap_or_default();
@@ -903,7 +953,9 @@ fn run_init() {
     // Prompt for Telegram token
     eprint!("Enter Telegram bot token (optional, press Enter to skip): ");
     let mut telegram_token = String::new();
-    std::io::stdin().read_line(&mut telegram_token).unwrap_or_default();
+    std::io::stdin()
+        .read_line(&mut telegram_token)
+        .unwrap_or_default();
     let telegram_token = telegram_token.trim().to_string();
 
     // Build config content
@@ -962,12 +1014,16 @@ async fn run_stdin() {
     let mut input = String::new();
     if atty::is(atty::Stream::Stdin) {
         eprintln!("oochy v{}", env!("CARGO_PKG_VERSION"));
-        eprintln!("Usage: echo '{{\"type\":\"web_chat\",\"payload\":{{\"text\":\"hello\"}}}}' | oochy");
+        eprintln!(
+            "Usage: echo '{{\"type\":\"web_chat\",\"payload\":{{\"text\":\"hello\"}}}}' | oochy"
+        );
         eprintln!("       oochy serve [--bind 0.0.0.0:3000]");
         std::process::exit(0);
     }
 
-    std::io::stdin().read_to_string(&mut input).expect("failed to read stdin");
+    std::io::stdin()
+        .read_to_string(&mut input)
+        .expect("failed to read stdin");
     let input = input.trim();
     if input.is_empty() {
         eprintln!("Error: empty input");

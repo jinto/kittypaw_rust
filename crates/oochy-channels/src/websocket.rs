@@ -1,13 +1,12 @@
 use async_trait::async_trait;
 use axum::{
-    Router,
     extract::{
-        State,
-        WebSocketUpgrade,
         ws::{Message, WebSocket},
+        State, WebSocketUpgrade,
     },
     response::IntoResponse,
     routing::get,
+    Router,
 };
 use dashmap::DashMap;
 use futures::{sink::SinkExt, stream::StreamExt};
@@ -65,10 +64,7 @@ impl Channel for WebSocketChannel {
     async fn start(&self, event_tx: mpsc::Sender<Event>) -> Result<()> {
         let sessions: SessionMap = Arc::new(DashMap::new());
 
-        let state = AppState {
-            event_tx,
-            sessions,
-        };
+        let state = AppState { event_tx, sessions };
 
         let app = Router::new()
             .route("/ws/chat", get(ws_handler))
@@ -80,13 +76,13 @@ impl Channel for WebSocketChannel {
 
         info!("WebSocket channel listening on {}", addr);
 
-        let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
-            OochyError::Config(format!("Failed to bind {}: {}", addr, e))
-        })?;
+        let listener = tokio::net::TcpListener::bind(addr)
+            .await
+            .map_err(|e| OochyError::Config(format!("Failed to bind {}: {}", addr, e)))?;
 
-        axum::serve(listener, app).await.map_err(|e| {
-            OochyError::Llm(format!("WebSocket server error: {}", e))
-        })?;
+        axum::serve(listener, app)
+            .await
+            .map_err(|e| OochyError::Llm(format!("WebSocket server error: {}", e)))?;
 
         Ok(())
     }
@@ -130,10 +126,7 @@ impl ServeWebSocketChannel {
     ) -> Result<tokio::task::JoinHandle<()>> {
         let sessions = self.sessions.clone();
 
-        let state = AppState {
-            event_tx,
-            sessions,
-        };
+        let state = AppState { event_tx, sessions };
 
         let app = Router::new()
             .route("/ws/chat", get(ws_handler))
@@ -145,9 +138,9 @@ impl ServeWebSocketChannel {
 
         info!("WebSocket channel listening on {}", addr);
 
-        let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
-            OochyError::Config(format!("Failed to bind {}: {}", addr, e))
-        })?;
+        let listener = tokio::net::TcpListener::bind(addr)
+            .await
+            .map_err(|e| OochyError::Config(format!("Failed to bind {}: {}", addr, e)))?;
 
         let handle = tokio::spawn(async move {
             if let Err(e) = axum::serve(listener, app).await {
@@ -161,9 +154,9 @@ impl ServeWebSocketChannel {
     /// Send a text response to a connected session.
     pub async fn send_to_session(&self, session_id: &str, text: &str) -> Result<()> {
         if let Some(tx) = self.sessions.get(session_id) {
-            tx.send(text.to_string()).await.map_err(|_| {
-                OochyError::Llm(format!("Session {} disconnected", session_id))
-            })?;
+            tx.send(text.to_string())
+                .await
+                .map_err(|_| OochyError::Llm(format!("Session {} disconnected", session_id)))?;
         } else {
             warn!("No active WebSocket session for id={}", session_id);
         }
@@ -173,10 +166,7 @@ impl ServeWebSocketChannel {
 
 // ── axum handlers ──────────────────────────────────────────────────────────
 
-async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
@@ -230,9 +220,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         }
 
         let text = incoming.text.unwrap_or_default();
-        let session_id = incoming
-            .session_id
-            .unwrap_or_else(uuid_v4);
+        let session_id = incoming.session_id.unwrap_or_else(uuid_v4);
 
         // Register session -> sender on first message.
         if let Some(tx) = session_id_tx.take() {

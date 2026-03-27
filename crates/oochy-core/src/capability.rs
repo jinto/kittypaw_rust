@@ -53,7 +53,9 @@ impl CapabilityChecker {
         // Token bucket rate limiting
         let now = Instant::now();
         let window = std::time::Duration::from_secs(60);
-        entry.call_timestamps.retain(|t| now.duration_since(*t) < window);
+        entry
+            .call_timestamps
+            .retain(|t| now.duration_since(*t) < window);
 
         if entry.call_timestamps.len() >= entry.rate_limit_per_minute as usize {
             return Err(OochyError::RateLimitExceeded(format!(
@@ -150,9 +152,21 @@ mod tests {
         };
         let mut checker = CapabilityChecker::from_agent_config(&config);
         // Any method should be allowed when methods is empty
-        let call1 = SkillCall { skill_name: "Telegram".into(), method: "sendMessage".into(), args: vec![] };
-        let call2 = SkillCall { skill_name: "Telegram".into(), method: "sendPhoto".into(), args: vec![] };
-        let call3 = SkillCall { skill_name: "Telegram".into(), method: "anyArbitraryMethod".into(), args: vec![] };
+        let call1 = SkillCall {
+            skill_name: "Telegram".into(),
+            method: "sendMessage".into(),
+            args: vec![],
+        };
+        let call2 = SkillCall {
+            skill_name: "Telegram".into(),
+            method: "sendPhoto".into(),
+            args: vec![],
+        };
+        let call3 = SkillCall {
+            skill_name: "Telegram".into(),
+            method: "anyArbitraryMethod".into(),
+            args: vec![],
+        };
         assert!(checker.check(&call1).is_ok());
         assert!(checker.check(&call2).is_ok());
         assert!(checker.check(&call3).is_ok());
@@ -187,16 +201,58 @@ mod tests {
         let mut checker = CapabilityChecker::from_agent_config(&config);
 
         // Each skill's allowed methods pass
-        assert!(checker.check(&SkillCall { skill_name: "Telegram".into(), method: "sendMessage".into(), args: vec![] }).is_ok());
-        assert!(checker.check(&SkillCall { skill_name: "Http".into(), method: "get".into(), args: vec![] }).is_ok());
-        assert!(checker.check(&SkillCall { skill_name: "Http".into(), method: "post".into(), args: vec![] }).is_ok());
-        assert!(checker.check(&SkillCall { skill_name: "Storage".into(), method: "set".into(), args: vec![] }).is_ok());
+        assert!(checker
+            .check(&SkillCall {
+                skill_name: "Telegram".into(),
+                method: "sendMessage".into(),
+                args: vec![]
+            })
+            .is_ok());
+        assert!(checker
+            .check(&SkillCall {
+                skill_name: "Http".into(),
+                method: "get".into(),
+                args: vec![]
+            })
+            .is_ok());
+        assert!(checker
+            .check(&SkillCall {
+                skill_name: "Http".into(),
+                method: "post".into(),
+                args: vec![]
+            })
+            .is_ok());
+        assert!(checker
+            .check(&SkillCall {
+                skill_name: "Storage".into(),
+                method: "set".into(),
+                args: vec![]
+            })
+            .is_ok());
 
         // Disallowed methods on each skill are rejected
-        assert!(checker.check(&SkillCall { skill_name: "Telegram".into(), method: "deleteMessage".into(), args: vec![] }).is_err());
-        assert!(checker.check(&SkillCall { skill_name: "Http".into(), method: "delete".into(), args: vec![] }).is_err());
+        assert!(checker
+            .check(&SkillCall {
+                skill_name: "Telegram".into(),
+                method: "deleteMessage".into(),
+                args: vec![]
+            })
+            .is_err());
+        assert!(checker
+            .check(&SkillCall {
+                skill_name: "Http".into(),
+                method: "delete".into(),
+                args: vec![]
+            })
+            .is_err());
 
         // Skill not in config is rejected
-        assert!(checker.check(&SkillCall { skill_name: "Discord".into(), method: "sendMessage".into(), args: vec![] }).is_err());
+        assert!(checker
+            .check(&SkillCall {
+                skill_name: "Discord".into(),
+                method: "sendMessage".into(),
+                args: vec![]
+            })
+            .is_err());
     }
 }

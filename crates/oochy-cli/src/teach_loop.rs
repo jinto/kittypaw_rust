@@ -57,9 +57,7 @@ pub async fn handle_teach(
     config: &Config,
 ) -> Result<TeachResult> {
     // Admin check
-    if !config.admin_chat_ids.is_empty()
-        && !config.admin_chat_ids.iter().any(|id| id == chat_id)
-    {
+    if !config.admin_chat_ids.is_empty() && !config.admin_chat_ids.iter().any(|id| id == chat_id) {
         return Ok(TeachResult::Error(
             "Permission denied: you are not an admin.".into(),
         ));
@@ -73,9 +71,7 @@ pub async fn handle_teach(
         },
         LlmMessage {
             role: Role::User,
-            content: format!(
-                "Create a skill for: {teach_text}\n\nThe chat_id is: {chat_id}"
-            ),
+            content: format!("Create a skill for: {teach_text}\n\nThe chat_id is: {chat_id}"),
         },
     ];
 
@@ -192,12 +188,32 @@ fn slugify_description(text: &str) -> String {
 fn detect_schedule(text: &str) -> bool {
     let lower = text.to_lowercase();
     const SCHEDULE_KEYWORDS: &[&str] = &[
-        "every day", "every morning", "every evening", "every night",
-        "every hour", "every minute", "daily", "hourly", "weekly",
-        "monthly", "at midnight", "at noon", "every monday", "every tuesday",
-        "every wednesday", "every thursday", "every friday", "every saturday",
-        "every sunday", "once a day", "once a week", "once a month",
-        "every week", "every month", "scheduled", "cron",
+        "every day",
+        "every morning",
+        "every evening",
+        "every night",
+        "every hour",
+        "every minute",
+        "daily",
+        "hourly",
+        "weekly",
+        "monthly",
+        "at midnight",
+        "at noon",
+        "every monday",
+        "every tuesday",
+        "every wednesday",
+        "every thursday",
+        "every friday",
+        "every saturday",
+        "every sunday",
+        "once a day",
+        "once a week",
+        "once a month",
+        "every week",
+        "every month",
+        "scheduled",
+        "cron",
     ];
     SCHEDULE_KEYWORDS.iter().any(|kw| lower.contains(kw))
 }
@@ -232,7 +248,10 @@ mod tests {
 
     #[test]
     fn test_slugify_description() {
-        assert_eq!(slugify_description("send a daily joke"), "send-a-daily-joke");
+        assert_eq!(
+            slugify_description("send a daily joke"),
+            "send-a-daily-joke"
+        );
         assert_eq!(slugify_description("Hello World"), "hello-world");
         assert_eq!(
             slugify_description("track my expenses in a spreadsheet"),

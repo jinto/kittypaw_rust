@@ -49,3 +49,4 @@ spikes/*/Cargo.lock
 .mypy_cache/
 htmlcov/
 .coverage
+.omc/

@@ -4,9 +4,9 @@ use std::time::Duration;
 
 use oochy_core::error::Result;
 use oochy_core::types::{ExecutionResult, SkillCall};
-use rquickjs::{async_with, AsyncContext, AsyncRuntime, Function, Object, Value};
-use rquickjs::prelude::Async;
 use rquickjs::function::Rest;
+use rquickjs::prelude::Async;
+use rquickjs::{async_with, AsyncContext, AsyncRuntime, Function, Object, Value};
 
 const SEATBELT_PROFILE: &str = r#"
 (version 1)
@@ -20,7 +20,11 @@ const SEATBELT_PROFILE: &str = r#"
 "#;
 
 extern "C" {
-    fn sandbox_init(profile: *const libc::c_char, flags: u64, errorbuf: *mut *mut libc::c_char) -> libc::c_int;
+    fn sandbox_init(
+        profile: *const libc::c_char,
+        flags: u64,
+        errorbuf: *mut *mut libc::c_char,
+    ) -> libc::c_int;
     fn sandbox_free_error(errorbuf: *mut libc::c_char);
 }
 
@@ -30,7 +34,9 @@ fn apply_seatbelt() -> std::result::Result<(), String> {
     let ret = unsafe { sandbox_init(profile_cstr.as_ptr(), 0, &mut errbuf) };
     if ret != 0 {
         let msg = if !errbuf.is_null() {
-            let s = unsafe { std::ffi::CStr::from_ptr(errbuf) }.to_string_lossy().to_string();
+            let s = unsafe { std::ffi::CStr::from_ptr(errbuf) }
+                .to_string_lossy()
+                .to_string();
             unsafe { sandbox_free_error(errbuf) };
             s
         } else {
@@ -155,8 +161,16 @@ fn run_child_async(code: &str, context: serde_json::Value) -> ExecutionResult {
 fn write_to_fd(fd: libc::c_int, data: &[u8]) {
     let mut offset = 0;
     while offset < data.len() {
-        let n = unsafe { libc::write(fd, data[offset..].as_ptr() as *const libc::c_void, data.len() - offset) };
-        if n <= 0 { break; }
+        let n = unsafe {
+            libc::write(
+                fd,
+                data[offset..].as_ptr() as *const libc::c_void,
+                data.len() - offset,
+            )
+        };
+        if n <= 0 {
+            break;
+        }
         offset += n as usize;
     }
 }
@@ -166,7 +180,9 @@ fn read_all_from_fd(fd: libc::c_int) -> Vec<u8> {
     let mut chunk = [0u8; 4096];
     loop {
         let n = unsafe { libc::read(fd, chunk.as_mut_ptr() as *mut libc::c_void, chunk.len()) };
-        if n <= 0 { break; }
+        if n <= 0 {
+            break;
+        }
         buf.extend_from_slice(&chunk[..n as usize]);
     }
     buf
@@ -179,7 +195,9 @@ fn run_child(write_fd: libc::c_int, code: &str, context: serde_json::Value, time
             success: false,
             output: String::new(),
             skill_calls: vec![],
-            error: Some(format!("Sandbox initialization failed (will not execute unsandboxed): {e}")),
+            error: Some(format!(
+                "Sandbox initialization failed (will not execute unsandboxed): {e}"
+            )),
         };
         if let Ok(json) = serde_json::to_string(&result) {
             write_to_fd(write_fd, json.as_bytes());
@@ -190,8 +208,15 @@ fn run_child(write_fd: libc::c_int, code: &str, context: serde_json::Value, time
     // SIGALRM backstop for infinite JS loops
     unsafe { libc::alarm(timeout_secs as u32) };
 
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_child_async(code, context)))
-        .unwrap_or_else(|_| ExecutionResult { success: false, output: String::new(), skill_calls: vec![], error: Some("child panicked".into()) });
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run_child_async(code, context)
+    }))
+    .unwrap_or_else(|_| ExecutionResult {
+        success: false,
+        output: String::new(),
+        skill_calls: vec![],
+        error: Some("child panicked".into()),
+    });
 
     let json = serde_json::to_string(&result).unwrap_or_else(|e| {
         format!(r#"{{"success":false,"output":"","skill_calls":[],"error":"serialize: {e}"}}"#)
@@ -207,13 +232,19 @@ pub struct Sandbox {
 
 impl Sandbox {
     pub fn new(timeout_secs: u64, memory_limit_mb: u64) -> Self {
-        Self { timeout_secs, memory_limit_mb }
+        Self {
+            timeout_secs,
+            memory_limit_mb,
+        }
     }
 
     pub async fn execute(&self, code: &str, context: serde_json::Value) -> Result<ExecutionResult> {
         let mut fds = [0i32; 2];
         if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
-            return Err(oochy_core::error::OochyError::Sandbox(format!("pipe() failed: {}", std::io::Error::last_os_error())));
+            return Err(oochy_core::error::OochyError::Sandbox(format!(
+                "pipe() failed: {}",
+                std::io::Error::last_os_error()
+            )));
         }
         let (read_fd, write_fd) = (fds[0], fds[1]);
         let code_owned = code.to_string();
@@ -222,8 +253,14 @@ impl Sandbox {
         let pid = unsafe { libc::fork() };
         match pid {
             -1 => {
-                unsafe { libc::close(read_fd); libc::close(write_fd); }
-                Err(oochy_core::error::OochyError::Sandbox(format!("fork() failed: {}", std::io::Error::last_os_error())))
+                unsafe {
+                    libc::close(read_fd);
+                    libc::close(write_fd);
+                }
+                Err(oochy_core::error::OochyError::Sandbox(format!(
+                    "fork() failed: {}",
+                    std::io::Error::last_os_error()
+                )))
             }
             0 => {
                 // CHILD
@@ -240,8 +277,11 @@ impl Sandbox {
                         let data = read_all_from_fd(read_fd);
                         unsafe { libc::close(read_fd) };
                         String::from_utf8_lossy(&data).to_string()
-                    }).await.unwrap_or_default()
-                }).await;
+                    })
+                    .await
+                    .unwrap_or_default()
+                })
+                .await;
 
                 let mut status = 0i32;
                 unsafe { libc::kill(child_pid, libc::SIGKILL) };
@@ -250,10 +290,17 @@ impl Sandbox {
                 match read_result {
                     Ok(output) if !output.is_empty() => {
                         serde_json::from_str::<ExecutionResult>(&output).map_err(|e| {
-                            oochy_core::error::OochyError::Sandbox(format!("parse child output: {e} (raw: {output:?})"))
+                            oochy_core::error::OochyError::Sandbox(format!(
+                                "parse child output: {e} (raw: {output:?})"
+                            ))
                         })
                     }
-                    _ => Ok(ExecutionResult { success: false, output: String::new(), skill_calls: vec![], error: Some("execution timed out".into()) }),
+                    _ => Ok(ExecutionResult {
+                        success: false,
+                        output: String::new(),
+                        skill_calls: vec![],
+                        error: Some("execution timed out".into()),
+                    }),
                 }
             }
         }
@@ -274,7 +321,10 @@ mod tests {
 
     #[test]
     fn test_direct_skill_call() {
-        let r = run_child_async(r#"await Telegram.sendMessage("chat123", "Hi"); return "done";"#, json!({}));
+        let r = run_child_async(
+            r#"await Telegram.sendMessage("chat123", "Hi"); return "done";"#,
+            json!({}),
+        );
         assert!(r.success, "error: {:?}", r.error);
         assert_eq!(r.output, "done");
         assert_eq!(r.skill_calls.len(), 1);
@@ -291,14 +341,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_forked_simple() {
-        let r = Sandbox::new(30, 128).execute("return 'hello from quickjs';", json!({})).await.unwrap();
+        let r = Sandbox::new(30, 128)
+            .execute("return 'hello from quickjs';", json!({}))
+            .await
+            .unwrap();
         assert!(r.success, "error: {:?}", r.error);
         assert_eq!(r.output, "hello from quickjs");
     }
 
     #[tokio::test]
     async fn test_forked_skill_call() {
-        let r = Sandbox::new(30, 128).execute(r#"await Telegram.sendMessage("chat123", "Hello World"); return "done";"#, json!({})).await.unwrap();
+        let r = Sandbox::new(30, 128)
+            .execute(
+                r#"await Telegram.sendMessage("chat123", "Hello World"); return "done";"#,
+                json!({}),
+            )
+            .await
+            .unwrap();
         assert!(r.success, "error: {:?}", r.error);
         assert_eq!(r.output, "done");
         assert_eq!(r.skill_calls.len(), 1);
@@ -307,14 +366,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_forked_syntax_error() {
-        let r = Sandbox::new(30, 128).execute("this is not valid !!!", json!({})).await.unwrap();
+        let r = Sandbox::new(30, 128)
+            .execute("this is not valid !!!", json!({}))
+            .await
+            .unwrap();
         assert!(!r.success);
         assert!(r.error.is_some());
     }
 
     #[tokio::test]
     async fn test_forked_timeout() {
-        let r = Sandbox::new(2, 128).execute("while(true) {}", json!({})).await.unwrap();
+        let r = Sandbox::new(2, 128)
+            .execute("while(true) {}", json!({}))
+            .await
+            .unwrap();
         assert!(!r.success);
         assert!(r.error.unwrap_or_default().contains("timed out"));
     }

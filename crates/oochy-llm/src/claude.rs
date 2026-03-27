@@ -108,7 +108,9 @@ impl LlmProvider for ClaudeProvider {
             if status.is_server_error() {
                 retries += 1;
                 if retries > max_retries {
-                    return Err(OochyError::Llm(format!("Server error {status} after max retries")));
+                    return Err(OochyError::Llm(format!(
+                        "Server error {status} after max retries"
+                    )));
                 }
                 let delay = std::time::Duration::from_millis(1000 * 2u64.pow(retries));
                 tracing::warn!("Server error {status}, retrying in {:?}", delay);

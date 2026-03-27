@@ -23,7 +23,8 @@ pub async fn execute_skill_calls(
     // Parallel would break ordering guarantees (message order, read-after-write).
     let mut results = Vec::new();
     for call in skill_calls {
-        let result = execute_single_call(call, allowed_hosts, &db_path, config, skill_context).await;
+        let result =
+            execute_single_call(call, allowed_hosts, &db_path, config, skill_context).await;
         results.push(result);
     }
 
@@ -135,22 +136,27 @@ async fn execute_telegram(call: &SkillCall) -> Result<serde_json::Value> {
 fn validate_url(url_str: &str, allowed_hosts: &[String]) -> Result<()> {
     use std::net::IpAddr;
 
-    let parsed = url::Url::parse(url_str)
-        .map_err(|_| OochyError::Sandbox("Http: invalid URL".into()))?;
+    let parsed =
+        url::Url::parse(url_str).map_err(|_| OochyError::Sandbox("Http: invalid URL".into()))?;
 
     // Block non-HTTP(S) schemes
     if !matches!(parsed.scheme(), "http" | "https") {
-        return Err(OochyError::Sandbox("Http: only http/https schemes allowed".into()));
+        return Err(OochyError::Sandbox(
+            "Http: only http/https schemes allowed".into(),
+        ));
     }
 
-    let host = parsed.host_str()
+    let host = parsed
+        .host_str()
         .ok_or_else(|| OochyError::Sandbox("Http: URL has no host".into()))?;
 
     // Block private/internal IPs (including IPv6-mapped IPv4)
     let addr_str = host.trim_start_matches('[').trim_end_matches(']');
     if let Ok(ip) = addr_str.parse::<IpAddr>() {
         let blocked = match ip {
-            IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local() || v4.is_unspecified(),
+            IpAddr::V4(v4) => {
+                v4.is_loopback() || v4.is_private() || v4.is_link_local() || v4.is_unspecified()
+            }
             IpAddr::V6(v6) => {
                 v6.is_loopback() || v6.is_unspecified() || v6.is_multicast()
                     // ULA (fc00::/7) and link-local (fe80::/10)
@@ -160,7 +166,9 @@ fn validate_url(url_str: &str, allowed_hosts: &[String]) -> Result<()> {
             }
         };
         if blocked {
-            return Err(OochyError::Sandbox(format!("Http: blocked private/internal IP: {host}")));
+            return Err(OochyError::Sandbox(format!(
+                "Http: blocked private/internal IP: {host}"
+            )));
         }
     }
 
@@ -171,7 +179,9 @@ fn validate_url(url_str: &str, allowed_hosts: &[String]) -> Result<()> {
 
     // Check allowlist if configured
     if !allowed_hosts.is_empty() && !allowed_hosts.iter().any(|h| host.ends_with(h.as_str())) {
-        return Err(OochyError::Sandbox(format!("Http: host '{host}' not in allowed_hosts")));
+        return Err(OochyError::Sandbox(format!(
+            "Http: host '{host}' not in allowed_hosts"
+        )));
     }
 
     Ok(())
@@ -224,8 +234,7 @@ async fn execute_http(call: &SkillCall, allowed_hosts: &[String]) -> Result<serd
 }
 
 fn open_storage_db(db_path: &str) -> Result<Connection> {
-    let conn = Connection::open(db_path)
-        .map_err(|e| OochyError::Store(e.to_string()))?;
+    let conn = Connection::open(db_path).map_err(|e| OochyError::Store(e.to_string()))?;
 
     conn.busy_timeout(std::time::Duration::from_secs(5))
         .map_err(|e| OochyError::Store(e.to_string()))?;
@@ -243,7 +252,11 @@ fn open_storage_db(db_path: &str) -> Result<Connection> {
     Ok(conn)
 }
 
-fn execute_storage(call: &SkillCall, db_path: &str, skill_context: Option<&str>) -> Result<serde_json::Value> {
+fn execute_storage(
+    call: &SkillCall,
+    db_path: &str,
+    skill_context: Option<&str>,
+) -> Result<serde_json::Value> {
     let conn = open_storage_db(db_path)?;
     let namespace = skill_context.unwrap_or("default");
 
@@ -311,21 +324,13 @@ async fn execute_llm(
         ));
     }
 
-    let prompt = call
-        .args
-        .first()
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let prompt = call.args.first().and_then(|v| v.as_str()).unwrap_or("");
 
     if prompt.is_empty() {
         return Err(OochyError::Skill("Llm.generate: prompt is required".into()));
     }
 
-    let max_tokens = call
-        .args
-        .get(1)
-        .and_then(|v| v.as_u64())
-        .unwrap_or(1024) as u32;
+    let max_tokens = call.args.get(1).and_then(|v| v.as_u64()).unwrap_or(1024) as u32;
 
     let api_key = &config.llm.api_key;
     let model = &config.llm.model;

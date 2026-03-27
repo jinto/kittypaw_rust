@@ -7,8 +7,8 @@ use std::str::FromStr;
 /// Validate a cron expression and enforce minimum 5-minute interval.
 #[allow(dead_code)]
 pub fn validate_cron(expr: &str) -> Result<(), String> {
-    let schedule = CronSchedule::from_str(expr)
-        .map_err(|e| format!("Invalid cron expression: {e}"))?;
+    let schedule =
+        CronSchedule::from_str(expr).map_err(|e| format!("Invalid cron expression: {e}"))?;
 
     // Check minimum interval: get next 2 occurrences and ensure gap >= 5 min
     let now = Utc::now();
@@ -52,8 +52,7 @@ pub fn is_due(skill: &Skill, last_run: Option<DateTime<Utc>>) -> bool {
 // --- Schedule persistence ---
 
 fn open_schedule_db(db_path: &str) -> Result<Connection, String> {
-    let conn =
-        Connection::open(db_path).map_err(|e| format!("Failed to open schedule db: {e}"))?;
+    let conn = Connection::open(db_path).map_err(|e| format!("Failed to open schedule db: {e}"))?;
     conn.busy_timeout(std::time::Duration::from_secs(5))
         .map_err(|e| format!("Failed to set busy timeout: {e}"))?;
     Ok(conn)

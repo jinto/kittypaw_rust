@@ -7,7 +7,10 @@ async fn test_fs_traversal_blocked() {
     // JS that tries to access the filesystem — should fail or return empty
     // (QuickJS has no fs module, and Seatbelt blocks raw syscalls)
     let s = Sandbox::new(10, 128);
-    let r = s.execute("return typeof require;", json!({})).await.unwrap();
+    let r = s
+        .execute("return typeof require;", json!({}))
+        .await
+        .unwrap();
     assert!(r.success);
     assert_eq!(r.output, "undefined"); // require doesn't exist
 }
@@ -16,7 +19,13 @@ async fn test_fs_traversal_blocked() {
 async fn test_memory_bomb() {
     // Allocate huge array — should be killed by timeout
     let s = Sandbox::new(3, 64);
-    let r = s.execute("var a = []; while(true) { a.push(new Array(1000000)); }", json!({})).await.unwrap();
+    let r = s
+        .execute(
+            "var a = []; while(true) { a.push(new Array(1000000)); }",
+            json!({}),
+        )
+        .await
+        .unwrap();
     assert!(!r.success);
 }
 
@@ -31,13 +40,22 @@ async fn test_cpu_spin_timeout() {
 #[tokio::test]
 async fn test_prototype_pollution_contained() {
     let s = Sandbox::new(10, 128);
-    let r = s.execute(r#"
+    let r = s
+        .execute(
+            r#"
         Object.prototype.polluted = true;
         return String(({}).polluted);
-    "#, json!({})).await.unwrap();
+    "#,
+            json!({}),
+        )
+        .await
+        .unwrap();
     assert!(r.success);
     // Pollution stays inside sandbox — next execution is clean
-    let r2 = s.execute("return String(({}).polluted);", json!({})).await.unwrap();
+    let r2 = s
+        .execute("return String(({}).polluted);", json!({}))
+        .await
+        .unwrap();
     assert!(r2.success);
     assert_eq!(r2.output, "undefined"); // clean sandbox
 }
@@ -53,17 +71,26 @@ async fn test_no_eval_escape() {
 #[tokio::test]
 async fn test_multiple_skill_calls_captured() {
     let s = Sandbox::new(10, 128);
-    let r = s.execute(r#"
+    let r = s
+        .execute(
+            r#"
         await Telegram.sendMessage("1", "a");
         await Telegram.sendMessage("2", "b");
         await Http.get("http://example.com");
         return "done";
-    "#, json!({})).await.unwrap();
+    "#,
+            json!({}),
+        )
+        .await
+        .unwrap();
     // Sandbox may fail-closed if Seatbelt is unavailable (CI, containers)
     if r.success {
         assert_eq!(r.skill_calls.len(), 3);
     } else {
         let err = r.error.unwrap_or_default();
-        assert!(err.contains("Sandbox initialization failed"), "unexpected error: {err}");
+        assert!(
+            err.contains("Sandbox initialization failed"),
+            "unexpected error: {err}"
+        );
     }
 }

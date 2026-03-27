@@ -43,7 +43,9 @@ impl Metrics {
     }
 
     pub fn inc_sandbox_executions(&self) {
-        self.inner.sandbox_executions.fetch_add(1, Ordering::Relaxed);
+        self.inner
+            .sandbox_executions
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn add_skill_calls(&self, n: u64) {

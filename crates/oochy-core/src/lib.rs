@@ -1,6 +1,6 @@
-pub mod types;
+pub mod capability;
 pub mod config;
 pub mod error;
-pub mod capability;
 pub mod metrics;
 pub mod skill;
+pub mod types;

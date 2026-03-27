@@ -92,7 +92,10 @@ impl Channel for TelegramChannel {
 
             match res {
                 Err(e) => {
-                    warn!("Telegram getUpdates network error: {}. Retrying in {}s", e, backoff_secs);
+                    warn!(
+                        "Telegram getUpdates network error: {}. Retrying in {}s",
+                        e, backoff_secs
+                    );
                     tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs)).await;
                     backoff_secs = (backoff_secs * 2).min(60);
                     continue;
@@ -139,7 +142,9 @@ impl Channel for TelegramChannel {
                                         };
 
                                         if event_tx.send(event).await.is_err() {
-                                            info!("Event receiver dropped, stopping Telegram polling");
+                                            info!(
+                                                "Event receiver dropped, stopping Telegram polling"
+                                            );
                                             return Ok(());
                                         }
                                     }
@@ -154,9 +159,9 @@ impl Channel for TelegramChannel {
 
     async fn send_response(&self, agent_id: &str, response: &str) -> Result<()> {
         // agent_id is used as the chat_id for Telegram
-        let chat_id: i64 = agent_id.parse().map_err(|_| {
-            OochyError::Config(format!("Invalid Telegram chat_id: {}", agent_id))
-        })?;
+        let chat_id: i64 = agent_id
+            .parse()
+            .map_err(|_| OochyError::Config(format!("Invalid Telegram chat_id: {}", agent_id)))?;
 
         let url = self.api_url("sendMessage");
         let body = json!({
