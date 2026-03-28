@@ -85,12 +85,12 @@ impl FilePermissionChecker {
         // 4. Global paths.
         for gp in &self.global_paths {
             if paths_match(&gp.path, &path_str) {
-                let allowed = match (&gp.access_type, action) {
-                    (AccessType::Read, FileAction::Read) => true,
-                    (AccessType::Write, FileAction::Write)
-                    | (AccessType::Write, FileAction::Delete) => true,
-                    _ => false,
-                };
+                let allowed = matches!(
+                    (&gp.access_type, action),
+                    (AccessType::Read, FileAction::Read)
+                        | (AccessType::Write, FileAction::Write)
+                        | (AccessType::Write, FileAction::Delete)
+                );
                 if allowed {
                     return PermissionResult::Allowed;
                 }

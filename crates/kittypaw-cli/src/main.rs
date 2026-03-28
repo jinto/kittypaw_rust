@@ -334,7 +334,7 @@ async fn run_serve(bind_addr: &str) {
                     match sandbox.execute(&wrapped_code, context).await {
                         Ok(exec_result) => {
                             if !exec_result.skill_calls.is_empty() {
-                                let preresolved = crate::skill_executor::resolve_storage_calls(&exec_result.skill_calls, &*store.lock().unwrap(), Some(&skill.name));
+                                let preresolved = crate::skill_executor::resolve_storage_calls(&exec_result.skill_calls, &store.lock().unwrap(), Some(&skill.name));
                                 let _ = crate::skill_executor::execute_skill_calls(&exec_result.skill_calls, &config, preresolved, Some(&skill.name)).await;
                             }
                             let output = if exec_result.output.is_empty() {
@@ -689,7 +689,7 @@ async fn run_skill_cli(name: &str, dry_run: bool) {
                         } else {
                             let preresolved = skill_executor::resolve_storage_calls(
                                 &result.skill_calls,
-                                &*store.lock().unwrap(),
+                                &store.lock().unwrap(),
                                 Some(&skill.name),
                             );
                             match skill_executor::execute_skill_calls(

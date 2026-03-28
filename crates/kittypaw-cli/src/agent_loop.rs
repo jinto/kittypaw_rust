@@ -145,7 +145,7 @@ pub async fn run_agent_loop(
                     filter_skill_calls(&exec_result.skill_calls, &config.agents, &agent_id);
                 let preresolved = {
                     let s = store.lock().unwrap();
-                    crate::skill_executor::resolve_storage_calls(&allowed_calls, &*s, None)
+                    crate::skill_executor::resolve_storage_calls(&allowed_calls, &s, None)
                 };
                 let skill_results = crate::skill_executor::execute_skill_calls(
                     &allowed_calls,

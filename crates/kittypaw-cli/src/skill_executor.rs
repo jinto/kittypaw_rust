@@ -373,7 +373,7 @@ mod tests {
         p
     }
 
-    fn open_store(path: &PathBuf) -> Store {
+    fn open_store(path: &std::path::Path) -> Store {
         Store::open(path.to_str().unwrap()).unwrap()
     }
 

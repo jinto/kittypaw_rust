@@ -84,12 +84,9 @@ impl WorkspaceManager {
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default();
 
-            let metadata = entry.metadata().map_err(|e| {
-                KittypawError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    e.to_string(),
-                ))
-            })?;
+            let metadata = entry
+                .metadata()
+                .map_err(|e| KittypawError::Io(std::io::Error::other(e.to_string())))?;
 
             let modified = metadata
                 .modified()

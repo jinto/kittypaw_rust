@@ -17,9 +17,7 @@ pub fn validate_path(workspace_root: &Path, rel_path: &str) -> Result<PathBuf> {
     let joined = workspace_root.join(rel);
 
     // Canonicalize the workspace root (must exist)
-    let canonical_root = workspace_root
-        .canonicalize()
-        .map_err(|e| KittypawError::Io(e))?;
+    let canonical_root = workspace_root.canonicalize().map_err(KittypawError::Io)?;
 
     // The target file may not exist yet (e.g. write_file creating new file),
     // so canonicalize the nearest existing ancestor, then re-append the suffix.
@@ -33,13 +31,13 @@ pub fn validate_path(workspace_root: &Path, rel_path: &str) -> Result<PathBuf> {
 
     // Additionally check: if the final path is a symlink, resolve it and re-check
     if joined.exists() && joined.is_symlink() {
-        let resolved = joined.read_link().map_err(|e| KittypawError::Io(e))?;
+        let resolved = joined.read_link().map_err(KittypawError::Io)?;
         let resolved = if resolved.is_absolute() {
             resolved
         } else {
             joined.parent().unwrap_or(Path::new("/")).join(&resolved)
         };
-        let resolved_canonical = resolved.canonicalize().map_err(|e| KittypawError::Io(e))?;
+        let resolved_canonical = resolved.canonicalize().map_err(KittypawError::Io)?;
         if !resolved_canonical.starts_with(&canonical_root) {
             return Err(KittypawError::Sandbox(format!(
                 "Symlink escapes workspace root: {rel_path}"
@@ -58,7 +56,7 @@ fn canonicalize_partial(path: &Path) -> Result<PathBuf> {
 
     loop {
         if existing.exists() {
-            let canonical = existing.canonicalize().map_err(|e| KittypawError::Io(e))?;
+            let canonical = existing.canonicalize().map_err(KittypawError::Io)?;
             let mut result = canonical;
             for component in suffix.iter() {
                 result = result.join(component);
