@@ -9,6 +9,7 @@ use kittypaw_llm::claude::ClaudeProvider;
 use kittypaw_sandbox::sandbox::Sandbox;
 use tauri::{AppHandle, Emitter, State};
 
+use crate::commands::settings::get_api_key_internal;
 use crate::state::AppState;
 
 /// Extract `@filename` references from `message`, read each file from the active
@@ -63,10 +64,7 @@ pub async fn send_message(
     app_handle: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    let api_key = {
-        let key = state.api_key.lock().unwrap();
-        key.clone()
-    };
+    let api_key = get_api_key_internal(&state);
 
     if api_key.is_empty() {
         return Err("API key not configured. Please set your API key in Settings.".to_string());

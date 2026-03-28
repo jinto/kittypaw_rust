@@ -28,7 +28,15 @@ fn main() {
 
     let store = Store::open(db_path.to_str().unwrap_or("kittypaw.db"))
         .expect("Failed to open database");
-    let app_state = AppState::new(store);
+
+    use commands::settings::{KEY_API_KEY, NS_SETTINGS};
+    let persisted_key = store
+        .storage_get(NS_SETTINGS, KEY_API_KEY)
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+
+    let app_state = AppState::new(store, persisted_key);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())

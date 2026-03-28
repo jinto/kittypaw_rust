@@ -56,8 +56,8 @@ pub async fn run_agent_loop(
     store: Arc<Mutex<Store>>,
     config: &kittypaw_core::config::Config,
     on_token: Option<std::sync::Arc<dyn Fn(String) + Send + Sync>>,
-    // TODO: wire permission checks
-    on_permission_request: Option<
+    // TODO: wire permission checks to sandbox file operations
+    _on_permission_request: Option<
         Arc<
             dyn Fn(PermissionRequest) -> tokio::sync::oneshot::Receiver<PermissionDecision>
                 + Send

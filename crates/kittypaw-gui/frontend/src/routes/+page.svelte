@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { onMount, onDestroy, tick } from 'svelte';
 	import { chatStore, isStreaming } from '$lib/stores/chat';
 	import { pendingChanges, selectedFile } from '$lib/stores/workspace';
 	import { sendMessage, onStreamToken, getSettings } from '$lib/tauri';
@@ -14,6 +14,7 @@
 	let needsApiKey = false;
 	let messagesEl: HTMLElement;
 	let streamingId: string | null = null;
+	let unlistenStream: (() => void) | null = null;
 
 	// Active panel: 'chat' | 'preview' | 'changes'
 	let activePanel: 'chat' | 'preview' | 'changes' = 'chat';
@@ -39,16 +40,16 @@
 			// tauri not available in browser preview
 		}
 
-		const unlisten = await onStreamToken((token) => {
+		unlistenStream = await onStreamToken((token) => {
 			if (streamingId) {
 				chatStore.appendToMessage(streamingId, token);
 				scrollToBottom();
 			}
 		});
+	});
 
-		return () => {
-			unlisten();
-		};
+	onDestroy(() => {
+		unlistenStream?.();
 	});
 
 	async function scrollToBottom() {

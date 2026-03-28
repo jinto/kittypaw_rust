@@ -34,7 +34,7 @@
 	}
 </script>
 
-<div class="settings-overlay" on:click|self={() => dispatch('close')} role="dialog" aria-modal="true" aria-label="Settings">
+<div class="settings-overlay" tabindex="-1" on:click|self={() => dispatch('close')} on:keydown={(e) => { if (e.key === 'Escape') dispatch('close'); }} role="dialog" aria-modal="true" aria-label="Settings">
 	<div class="settings-panel">
 		<div class="header">
 			<h2>Settings</h2>
