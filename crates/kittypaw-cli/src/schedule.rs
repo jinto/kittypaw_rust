@@ -298,6 +298,22 @@ pub async fn run_schedule_loop(
                                         format!("const ctx = JSON.parse(__context__);\n{chain_js}");
                                     match sandbox.execute(&chain_wrapped, chain_context).await {
                                         Ok(chain_result) if chain_result.success => {
+                                            // Execute captured skill calls (Telegram, Http, etc.)
+                                            if !chain_result.skill_calls.is_empty() {
+                                                let preresolved =
+                                                    crate::skill_executor::resolve_storage_calls(
+                                                        &chain_result.skill_calls,
+                                                        &store,
+                                                        Some(&chain_pkg.meta.id),
+                                                    );
+                                                let _ = crate::skill_executor::execute_skill_calls(
+                                                    &chain_result.skill_calls,
+                                                    &config,
+                                                    preresolved,
+                                                    Some(&chain_pkg.meta.id),
+                                                )
+                                                .await;
+                                            }
                                             tracing::info!(
                                                 "Chain step '{}' completed: {}",
                                                 chain_pkg.meta.id,

@@ -360,7 +360,11 @@ async fn execute_http(call: &SkillCall, allowed_hosts: &[String]) -> Result<serd
 }
 
 async fn execute_web(call: &SkillCall, allowed_hosts: &[String]) -> Result<serde_json::Value> {
-    let client = reqwest::Client::new();
+    // Disable redirects to prevent SSRF bypass via redirect to internal IPs
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
 
     match call.method.as_str() {
         "search" => {
@@ -460,7 +464,12 @@ async fn execute_web(call: &SkillCall, allowed_hosts: &[String]) -> Result<serde
             // Truncate to prevent huge responses
             let max_len = 50_000;
             let text = if text.len() > max_len {
-                format!("{}...(truncated)", &text[..max_len])
+                // Find a valid UTF-8 char boundary at or before max_len
+                let mut end = max_len;
+                while end > 0 && !text.is_char_boundary(end) {
+                    end -= 1;
+                }
+                format!("{}...(truncated)", &text[..end])
             } else {
                 text
             };
