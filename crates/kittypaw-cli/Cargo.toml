@@ -1,0 +1,33 @@
+[package]
+name = "kittypaw-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "kittypaw"
+path = "src/main.rs"
+
+[lib]
+name = "kittypaw_cli"
+path = "src/lib.rs"
+
+[dependencies]
+kittypaw-core = { workspace = true }
+kittypaw-llm = { workspace = true }
+kittypaw-sandbox = { workspace = true }
+kittypaw-store = { workspace = true }
+kittypaw-channels = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio = { workspace = true }
+rusqlite = { version = "0.32", features = ["bundled"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+clap = { version = "4", features = ["derive"] }
+atty = "0.2"
+url = "2"
+chrono = { version = "0.4", features = ["serde"] }
+cron = "0.16"
+toml = "0.8"

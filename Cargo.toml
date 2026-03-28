@@ -1,11 +1,14 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/oochy-core",
-    "crates/oochy-llm",
-    "crates/oochy-sandbox",
-    "crates/oochy-cli",
-    "crates/oochy-channels",
+    "crates/kittypaw-core",
+    "crates/kittypaw-llm",
+    "crates/kittypaw-sandbox",
+    "crates/kittypaw-store",
+    "crates/kittypaw-cli",
+    "crates/kittypaw-channels",
+    "crates/kittypaw-workspace",
+    "crates/kittypaw-gui",
 ]
 
 [workspace.package]
@@ -23,7 +26,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # Internal crates
-oochy-core = { path = "crates/oochy-core" }
-oochy-llm = { path = "crates/oochy-llm" }
-oochy-sandbox = { path = "crates/oochy-sandbox" }
-oochy-channels = { path = "crates/oochy-channels" }
+kittypaw-core = { path = "crates/kittypaw-core" }
+kittypaw-llm = { path = "crates/kittypaw-llm" }
+kittypaw-sandbox = { path = "crates/kittypaw-sandbox" }
+kittypaw-store = { path = "crates/kittypaw-store" }
+kittypaw-channels = { path = "crates/kittypaw-channels" }
+kittypaw-workspace = { path = "crates/kittypaw-workspace" }

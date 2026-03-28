@@ -1,0 +1,27 @@
+{
+  "productName": "KittyPaw",
+  "version": "0.1.0",
+  "identifier": "com.kittypaw.desktop",
+  "build": {
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../frontend/build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "KittyPaw",
+        "width": 1200,
+        "height": 800,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://api.anthropic.com; img-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": []
+  }
+}

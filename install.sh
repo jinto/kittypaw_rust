@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Oochy installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/jinto/oochy/main/install.sh | bash
+# KittyPaw installer
+# Usage: curl -fsSL https://raw.githubusercontent.com/jinto/kittypaw/main/install.sh | bash
 
-REPO="jinto/oochy"
-VERSION="${OOCHY_VERSION:-latest}"
-INSTALL_DIR="${OOCHY_INSTALL_DIR:-$HOME/.local/bin}"
+REPO="jinto/kittypaw"
+VERSION="${KITTYPAW_VERSION:-latest}"
+INSTALL_DIR="${KITTYPAW_INSTALL_DIR:-$HOME/.local/bin}"
 
 main() {
-    echo "Installing Oochy..."
+    echo "Installing KittyPaw..."
     echo ""
 
     # Detect OS
@@ -34,7 +34,7 @@ main() {
             ;;
     esac
 
-    BINARY="oochy-${OS}-${ARCH}"
+    BINARY="kittypaw-${OS}-${ARCH}"
 
     # Get download URL
     if [ "$VERSION" = "latest" ]; then
@@ -54,19 +54,19 @@ main() {
     # Download
     echo "Downloading from $DOWNLOAD_URL..."
     if command -v curl &> /dev/null; then
-        curl -fsSL "$DOWNLOAD_URL" -o "${INSTALL_DIR}/oochy"
+        curl -fsSL "$DOWNLOAD_URL" -o "${INSTALL_DIR}/kittypaw"
     elif command -v wget &> /dev/null; then
-        wget -q "$DOWNLOAD_URL" -O "${INSTALL_DIR}/oochy"
+        wget -q "$DOWNLOAD_URL" -O "${INSTALL_DIR}/kittypaw"
     else
         echo "Error: curl or wget required"
         exit 1
     fi
 
     # Make executable
-    chmod +x "${INSTALL_DIR}/oochy"
+    chmod +x "${INSTALL_DIR}/kittypaw"
 
     echo ""
-    echo "Oochy installed to ${INSTALL_DIR}/oochy"
+    echo "KittyPaw installed to ${INSTALL_DIR}/kittypaw"
     echo ""
 
     # Check if install dir is in PATH
@@ -77,9 +77,9 @@ main() {
     fi
 
     echo "Get started:"
-    echo "  oochy init                              # Set up API key"
-    echo "  oochy teach \"send me a daily joke\"      # Teach a skill"
-    echo "  oochy serve                              # Start the bot"
+    echo "  kittypaw init                              # Set up API key"
+    echo "  kittypaw teach \"send me a daily joke\"      # Teach a skill"
+    echo "  kittypaw serve                              # Start the bot"
     echo ""
     echo "Happy conversational programming!"
 }
