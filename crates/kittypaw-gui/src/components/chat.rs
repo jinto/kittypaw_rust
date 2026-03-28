@@ -1,9 +1,92 @@
 use dioxus::prelude::*;
+use futures_util::StreamExt;
+use kittypaw_core::types::{LlmMessage, Role};
+use kittypaw_llm::claude::ClaudeProvider;
+use kittypaw_llm::provider::LlmProvider;
+
+use crate::state::AppState;
+
+/// Default model used for chat. LlmRegistry wiring will replace this once
+/// kittypaw.toml config parsing is added.
+const DEFAULT_MODEL: &str = "claude-sonnet-4-20250514";
+const DEFAULT_MAX_TOKENS: u32 = 4096;
 
 #[component]
 pub fn ChatPanel() -> Element {
+    let app_state = use_context::<AppState>();
     let mut messages = use_signal::<Vec<(String, String)>>(Vec::new);
     let mut input_text = use_signal(String::new);
+    let mut is_loading = use_signal(|| false);
+
+    let chat_coroutine = use_coroutine(move |mut rx: UnboundedReceiver<String>| {
+        let state = app_state.clone();
+        async move {
+            while let Some(user_msg) = rx.next().await {
+                is_loading.set(true);
+
+                // Get API key
+                let api_key = state.api_key.lock().unwrap().clone();
+                if api_key.is_empty() {
+                    messages.write().push((
+                        "assistant".into(),
+                        "Please set your API key in Settings first.".into(),
+                    ));
+                    is_loading.set(false);
+                    continue;
+                }
+
+                // Build conversation history for context
+                let mut llm_messages = vec![LlmMessage {
+                    role: Role::System,
+                    content: "You are KittyPaw, a helpful AI assistant.".into(),
+                }];
+
+                // Include previous messages for context
+                for (role, content) in messages.read().iter() {
+                    let r = match role.as_str() {
+                        "user" => Role::User,
+                        _ => Role::Assistant,
+                    };
+                    llm_messages.push(LlmMessage {
+                        role: r,
+                        content: content.clone(),
+                    });
+                }
+
+                // Add current user message
+                llm_messages.push(LlmMessage {
+                    role: Role::User,
+                    content: user_msg,
+                });
+
+                let provider =
+                    ClaudeProvider::new(api_key, DEFAULT_MODEL.to_string(), DEFAULT_MAX_TOKENS);
+
+                match provider.generate(&llm_messages).await {
+                    Ok(response) => {
+                        messages.write().push(("assistant".into(), response));
+                    }
+                    Err(e) => {
+                        messages
+                            .write()
+                            .push(("assistant".into(), format!("Error: {e}")));
+                    }
+                }
+
+                is_loading.set(false);
+            }
+        }
+    });
+
+    let mut send_message = move || {
+        let msg = input_text.read().clone();
+        if msg.is_empty() || *is_loading.read() {
+            return;
+        }
+        messages.write().push(("user".into(), msg.clone()));
+        input_text.set(String::new());
+        chat_coroutine.send(msg);
+    };
 
     rsx! {
         div { style: "flex: 1; display: flex; flex-direction: column; overflow: hidden;",
@@ -19,6 +102,11 @@ pub fn ChatPanel() -> Element {
                     for (i, (role, content)) in messages.read().iter().enumerate() {
                         ChatMessage { key: "{i}", role: role.clone(), content: content.clone() }
                     }
+                    if *is_loading.read() {
+                        div { style: "display: flex; align-items: center; gap: 8px; color: #64748b; font-size: 13px; padding: 8px 0;",
+                            "KittyPaw is thinking..."
+                        }
+                    }
                 }
             }
 
@@ -31,25 +119,25 @@ pub fn ChatPanel() -> Element {
                         value: "{input_text}",
                         oninput: move |e| input_text.set(e.value()),
                         onkeypress: move |e| {
-                            if e.key() == Key::Enter && !input_text.read().is_empty() {
-                                let msg = input_text.read().clone();
-                                messages.write().push(("user".into(), msg));
-                                input_text.set(String::new());
-                                messages.write().push(("assistant".into(), "(AI response will appear here)".into()));
+                            if e.key() == Key::Enter {
+                                send_message();
                             }
                         },
                     }
-                    button {
-                        style: "padding: 10px 16px; background: #2563eb; color: #fff; border: none; border-radius: 10px; cursor: pointer; font-size: 14px;",
-                        onclick: move |_| {
-                            if !input_text.read().is_empty() {
-                                let msg = input_text.read().clone();
-                                messages.write().push(("user".into(), msg));
-                                input_text.set(String::new());
-                                messages.write().push(("assistant".into(), "(AI response will appear here)".into()));
+                    {
+                        let loading = *is_loading.read();
+                        let btn_bg = if loading { "#94a3b8" } else { "#2563eb" };
+                        let btn_label = if loading { "..." } else { "Send" };
+                        rsx! {
+                            button {
+                                style: "padding: 10px 16px; background: {btn_bg}; color: #fff; border: none; border-radius: 10px; cursor: pointer; font-size: 14px;",
+                                disabled: loading,
+                                onclick: move |_| {
+                                    send_message();
+                                },
+                                "{btn_label}"
                             }
-                        },
-                        "Send"
+                        }
                     }
                 }
             }

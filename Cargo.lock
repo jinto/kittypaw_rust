@@ -3040,6 +3040,7 @@ version = "0.1.0"
 dependencies = [
  "dioxus",
  "dirs-next",
+ "futures-util",
  "kittypaw-cli",
  "kittypaw-core",
  "kittypaw-llm",
