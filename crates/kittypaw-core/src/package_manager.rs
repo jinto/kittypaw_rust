@@ -191,6 +191,19 @@ impl PackageManager {
         Ok(())
     }
 
+    /// Load a chain of packages for execution.
+    /// Returns the packages in chain order with their JS code.
+    pub fn load_chain(&self, package: &SkillPackage) -> Result<Vec<(SkillPackage, String)>> {
+        let mut chain = Vec::new();
+        for step in &package.chain {
+            let pkg = self.load_package(&step.package_id)?;
+            let js_path = self.packages_dir.join(&step.package_id).join("main.js");
+            let js_code = std::fs::read_to_string(&js_path).map_err(KittypawError::Io)?;
+            chain.push((pkg, js_code));
+        }
+        Ok(chain)
+    }
+
     /// Get all config values, merging defaults from schema.
     pub fn get_config_with_defaults(&self, id: &str) -> Result<HashMap<String, String>> {
         let pkg = self.load_package(id)?;
@@ -445,5 +458,57 @@ primitives = []
             loaded.is_empty(),
             "Package with missing main.js should be skipped"
         );
+    }
+
+    #[test]
+    fn test_load_chain() {
+        let packages_tmp = TempDir::new().unwrap();
+        let mgr = PackageManager::new(packages_tmp.path().to_path_buf());
+
+        // Create chain target package "step-b"
+        let step_b_dir = packages_tmp.path().join("step-b");
+        std::fs::create_dir_all(&step_b_dir).unwrap();
+        std::fs::write(
+            step_b_dir.join("package.toml"),
+            r#"
+[package]
+id = "step-b"
+name = "Step B"
+version = "1.0.0"
+description = "Second step"
+author = "test"
+category = "test"
+
+[permissions]
+primitives = []
+"#,
+        )
+        .unwrap();
+        std::fs::write(step_b_dir.join("main.js"), "// step b code").unwrap();
+
+        // Create parent package "step-a" with chain pointing to "step-b"
+        let step_a_toml = r#"
+[package]
+id = "step-a"
+name = "Step A"
+version = "1.0.0"
+description = "First step"
+author = "test"
+category = "test"
+
+[permissions]
+primitives = []
+
+[[chain]]
+package = "step-b"
+"#;
+        let pkg = crate::package::parse_package_toml(step_a_toml).unwrap();
+        assert_eq!(pkg.chain.len(), 1);
+        assert_eq!(pkg.chain[0].package_id, "step-b");
+
+        let chain = mgr.load_chain(&pkg).unwrap();
+        assert_eq!(chain.len(), 1);
+        assert_eq!(chain[0].0.meta.id, "step-b");
+        assert_eq!(chain[0].1, "// step b code");
     }
 }

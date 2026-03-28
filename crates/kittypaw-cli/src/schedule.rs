@@ -255,7 +255,7 @@ pub async fn run_schedule_loop(
                 let event_payload = serde_json::json!({
                     "event_type": "schedule",
                 });
-                let context = pkg.build_context(&config_values, event_payload);
+                let context = pkg.build_context(&config_values, event_payload, None);
                 let wrapped = format!("const ctx = JSON.parse(__context__);\n{js_code}");
                 match sandbox.execute(&wrapped, context).await {
                     Ok(result) if result.success => {
@@ -280,6 +280,50 @@ pub async fn run_schedule_loop(
                         );
                         set_last_run(db_path, &pkg.meta.id, Utc::now()).ok();
                         reset_failure_count(db_path, &pkg.meta.id).ok();
+
+                        // Execute chain steps if present
+                        if !pkg.chain.is_empty() {
+                            if let Ok(chain_steps) = pkg_mgr.load_chain(pkg) {
+                                let mut prev_output = result.output.clone();
+                                for (chain_pkg, chain_js) in &chain_steps {
+                                    let chain_config = pkg_mgr
+                                        .get_config_with_defaults(&chain_pkg.meta.id)
+                                        .unwrap_or_default();
+                                    let chain_context = chain_pkg.build_context(
+                                        &chain_config,
+                                        serde_json::json!({}),
+                                        Some(&prev_output),
+                                    );
+                                    let chain_wrapped =
+                                        format!("const ctx = JSON.parse(__context__);\n{chain_js}");
+                                    match sandbox.execute(&chain_wrapped, chain_context).await {
+                                        Ok(chain_result) if chain_result.success => {
+                                            tracing::info!(
+                                                "Chain step '{}' completed: {}",
+                                                chain_pkg.meta.id,
+                                                chain_result.output
+                                            );
+                                            prev_output = chain_result.output;
+                                        }
+                                        Ok(chain_result) => {
+                                            tracing::warn!(
+                                                "Chain step '{}' failed: {:?}",
+                                                chain_pkg.meta.id,
+                                                chain_result.error
+                                            );
+                                            break;
+                                        }
+                                        Err(e) => {
+                                            tracing::error!(
+                                                "Chain step '{}' execution error: {e}",
+                                                chain_pkg.meta.id
+                                            );
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     Ok(result) => {
                         tracing::warn!(
@@ -444,6 +488,7 @@ mod tests {
                 natural: None,
                 keyword: None,
             }),
+            chain: vec![],
         }
     }
 

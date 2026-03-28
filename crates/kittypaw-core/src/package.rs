@@ -8,6 +8,14 @@ use crate::skill::SkillTrigger;
 // Public types
 // ---------------------------------------------------------------------------
 
+/// A single step in a skill chain.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChainStep {
+    pub package_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
 /// Skill package metadata parsed from `package.toml`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SkillPackage {
@@ -16,6 +24,10 @@ pub struct SkillPackage {
     pub permissions: PackagePermissions,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trigger: Option<SkillTrigger>,
+    /// Optional chain of package IDs to execute in sequence.
+    /// Each package's output becomes the next package's `prev_output` in context.
+    #[serde(default)]
+    pub chain: Vec<ChainStep>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -67,10 +79,12 @@ pub struct PackagePermissions {
 impl SkillPackage {
     /// Build a sandbox context JSON that includes package config values.
     /// JS code accesses these via `JSON.parse(__context__).config.key_name`.
+    /// When running as part of a chain, `prev_output` carries the previous step's output.
     pub fn build_context(
         &self,
         config_values: &HashMap<String, String>,
         event_payload: serde_json::Value,
+        prev_output: Option<&str>,
     ) -> serde_json::Value {
         let config_json: serde_json::Value = config_values
             .iter()
@@ -78,11 +92,17 @@ impl SkillPackage {
             .collect::<serde_json::Map<String, serde_json::Value>>()
             .into();
 
-        serde_json::json!({
+        let mut ctx = serde_json::json!({
             "event": event_payload,
             "config": config_json,
             "package_id": self.meta.id,
-        })
+        });
+
+        if let Some(output) = prev_output {
+            ctx["prev_output"] = serde_json::Value::String(output.to_string());
+        }
+
+        ctx
     }
 }
 
@@ -91,11 +111,18 @@ impl SkillPackage {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct ChainStepToml {
+    pub package: String,
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct PackageToml {
     pub package: PackageMeta,
     pub trigger: Option<SkillTrigger>,
     pub permissions: PackagePermissions,
     pub config: Option<PackageConfigToml>,
+    pub chain: Option<Vec<ChainStepToml>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -118,6 +145,18 @@ impl PackageToml {
             config_schema: self.config.map(|c| c.fields).unwrap_or_default(),
             permissions: self.permissions,
             trigger: self.trigger,
+            chain: self
+                .chain
+                .map(|steps| {
+                    steps
+                        .into_iter()
+                        .map(|s| ChainStep {
+                            package_id: s.package,
+                            model: s.model,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 }
@@ -283,7 +322,7 @@ options = ["us-east-1", "eu-west-1", "ap-northeast-1"]
         config.insert("chat_id".to_string(), "42".to_string());
 
         let event = serde_json::json!({"event_type": "schedule"});
-        let ctx = pkg.build_context(&config, event.clone());
+        let ctx = pkg.build_context(&config, event.clone(), None);
 
         assert_eq!(ctx["package_id"], "macro-economy-report");
         assert_eq!(ctx["event"], event);
@@ -296,9 +335,60 @@ options = ["us-east-1", "eu-west-1", "ap-northeast-1"]
         let pkg = parse_package_toml(SAMPLE_TOML).unwrap();
         let config = HashMap::new();
         let event = serde_json::json!({"event_type": "schedule"});
-        let ctx = pkg.build_context(&config, event);
+        let ctx = pkg.build_context(&config, event, None);
 
         assert_eq!(ctx["package_id"], "macro-economy-report");
         assert!(ctx["config"].as_object().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_parse_package_with_chain() {
+        let toml_str = r#"
+[package]
+id = "chain-test"
+name = "Chain Test"
+version = "0.1.0"
+description = "Test chain"
+author = "test"
+category = "misc"
+
+[permissions]
+primitives = []
+
+[[chain]]
+package = "fetch-data"
+
+[[chain]]
+package = "summarize"
+model = "gpt-4o"
+
+[[chain]]
+package = "send-telegram"
+"#;
+        let pkg = parse_package_toml(toml_str).unwrap();
+        assert_eq!(pkg.chain.len(), 3);
+        assert_eq!(pkg.chain[0].package_id, "fetch-data");
+        assert_eq!(pkg.chain[0].model, None);
+        assert_eq!(pkg.chain[1].package_id, "summarize");
+        assert_eq!(pkg.chain[1].model.as_deref(), Some("gpt-4o"));
+        assert_eq!(pkg.chain[2].package_id, "send-telegram");
+        assert_eq!(pkg.chain[2].model, None);
+    }
+
+    #[test]
+    fn test_parse_package_without_chain() {
+        let pkg = parse_package_toml(SAMPLE_TOML).unwrap();
+        assert!(pkg.chain.is_empty());
+    }
+
+    #[test]
+    fn test_build_context_with_prev_output() {
+        let pkg = parse_package_toml(SAMPLE_TOML).unwrap();
+        let config = HashMap::new();
+        let event = serde_json::json!({"event_type": "schedule"});
+        let ctx = pkg.build_context(&config, event, Some("previous step result"));
+
+        assert_eq!(ctx["prev_output"], "previous step result");
+        assert_eq!(ctx["package_id"], "macro-economy-report");
     }
 }
