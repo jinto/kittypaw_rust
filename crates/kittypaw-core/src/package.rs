@@ -28,6 +28,10 @@ pub struct SkillPackage {
     /// Each package's output becomes the next package's `prev_output` in context.
     #[serde(default)]
     pub chain: Vec<ChainStep>,
+    /// Optional model name to use for LLM calls in this package (e.g. "local", "claude-sonnet").
+    /// Overrides the default model from the global config when set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -132,6 +136,7 @@ pub(crate) struct PackageToml {
     pub permissions: PackagePermissions,
     pub config: Option<PackageConfigToml>,
     pub chain: Option<Vec<ChainStepToml>>,
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -166,6 +171,7 @@ impl PackageToml {
                         .collect()
                 })
                 .unwrap_or_default(),
+            model: self.model,
         }
     }
 }

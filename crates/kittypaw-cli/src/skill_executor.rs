@@ -101,6 +101,7 @@ pub async fn resolve_skill_call(
         config,
         None,
         &llm_call_count,
+        None,
     )
     .await;
 
@@ -141,12 +142,14 @@ pub fn resolve_storage_calls(
 /// Storage calls must be pre-resolved via `resolve_storage_calls` and passed as `preresolved`.
 /// When `checker` is provided, each call is verified against the capability allowlist.
 /// If `None`, all calls are permitted (permissive/legacy mode).
+/// `model_override` selects a named model from `config.models` for LLM calls instead of the default.
 pub async fn execute_skill_calls(
     skill_calls: &[SkillCall],
     config: &kittypaw_core::config::Config,
     preresolved: Vec<Option<SkillResult>>,
     skill_context: Option<&str>,
     mut checker: Option<&mut CapabilityChecker>,
+    model_override: Option<&str>,
 ) -> Result<Vec<SkillResult>> {
     let allowed_hosts = &config.sandbox.allowed_hosts;
     // Per-execution LLM call counter (not global, avoids race between concurrent executions)
@@ -170,7 +173,15 @@ pub async fn execute_skill_calls(
                     continue;
                 }
             }
-            execute_single_call(call, allowed_hosts, config, skill_context, &llm_call_count).await
+            execute_single_call(
+                call,
+                allowed_hosts,
+                config,
+                skill_context,
+                &llm_call_count,
+                model_override,
+            )
+            .await
         };
         results.push(result);
     }
@@ -212,6 +223,7 @@ async fn execute_single_call(
     config: &kittypaw_core::config::Config,
     _skill_context: Option<&str>,
     llm_call_count: &AtomicU32,
+    model_override: Option<&str>,
 ) -> SkillResult {
     let result = match call.skill_name.as_str() {
         "Telegram" => execute_telegram(call).await,
@@ -219,7 +231,7 @@ async fn execute_single_call(
         "Discord" => execute_discord(call).await,
         "Http" => execute_http(call, allowed_hosts).await,
         "Web" => execute_web(call, allowed_hosts).await,
-        "Llm" => execute_llm(call, config, llm_call_count).await,
+        "Llm" => execute_llm(call, config, llm_call_count, model_override).await,
         "File" => execute_file(call, None),
         "Env" => execute_env(call, None),
         _ => Err(KittypawError::CapabilityDenied(format!(
@@ -772,6 +784,7 @@ async fn execute_llm(
     call: &SkillCall,
     config: &kittypaw_core::config::Config,
     llm_call_count: &AtomicU32,
+    model_override: Option<&str>,
 ) -> Result<serde_json::Value> {
     let count = llm_call_count.fetch_add(1, Ordering::Relaxed);
     if count >= LLM_MAX_CALLS_PER_EXECUTION {
@@ -790,35 +803,111 @@ async fn execute_llm(
 
     let max_tokens = call.args.get(1).and_then(|v| v.as_u64()).unwrap_or(1024) as u32;
 
-    let api_key = &config.llm.api_key;
-    let model = &config.llm.model;
+    // Resolve model config: if a model override name is provided and matches a registered
+    // model in config.models, use that model's credentials; otherwise fall back to default.
+    let (api_key, model, base_url, provider) =
+        if let Some(name) = model_override.filter(|s| !s.is_empty()) {
+            if let Some(mc) = config.models.iter().find(|m| m.name == name) {
+                let key = if mc.api_key.is_empty() {
+                    kittypaw_core::secrets::get_secret("models", &mc.name)
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default()
+                } else {
+                    mc.api_key.clone()
+                };
+                (
+                    key,
+                    mc.model.clone(),
+                    mc.base_url.clone(),
+                    mc.provider.clone(),
+                )
+            } else {
+                tracing::warn!(
+                    "model_override '{}' not found in config.models, using default",
+                    name
+                );
+                (
+                    config.llm.api_key.clone(),
+                    config.llm.model.clone(),
+                    None,
+                    config.llm.provider.clone(),
+                )
+            }
+        } else {
+            (
+                config.llm.api_key.clone(),
+                config.llm.model.clone(),
+                None,
+                config.llm.provider.clone(),
+            )
+        };
 
     let client = reqwest::Client::new();
-    let resp = client
-        .post("https://api.anthropic.com/v1/messages")
-        .header("x-api-key", api_key)
-        .header("anthropic-version", "2023-06-01")
-        .header("content-type", "application/json")
-        .json(&serde_json::json!({
-            "model": model,
-            "max_tokens": max_tokens,
-            "messages": [{"role": "user", "content": prompt}]
-        }))
-        .send()
-        .await
-        .map_err(|e| KittypawError::Skill(format!("Llm API error: {e}")))?;
+
+    // Route to provider-specific endpoint
+    let is_openai_compat = matches!(provider.as_str(), "openai" | "ollama" | "local");
+    let endpoint = if is_openai_compat {
+        let url = base_url
+            .as_deref()
+            .unwrap_or("https://api.openai.com/v1")
+            .trim_end_matches('/');
+        format!("{url}/chat/completions")
+    } else {
+        "https://api.anthropic.com/v1/messages".to_string()
+    };
+
+    let resp = if is_openai_compat {
+        let mut req = client
+            .post(&endpoint)
+            .header("content-type", "application/json")
+            .json(&serde_json::json!({
+                "model": model,
+                "max_tokens": max_tokens,
+                "messages": [{"role": "user", "content": prompt}]
+            }));
+        if !api_key.is_empty() {
+            req = req.header("Authorization", format!("Bearer {api_key}"));
+        }
+        req.send()
+            .await
+            .map_err(|e| KittypawError::Skill(format!("Llm API error: {e}")))?
+    } else {
+        client
+            .post(&endpoint)
+            .header("x-api-key", &api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&serde_json::json!({
+                "model": model,
+                "max_tokens": max_tokens,
+                "messages": [{"role": "user", "content": prompt}]
+            }))
+            .send()
+            .await
+            .map_err(|e| KittypawError::Skill(format!("Llm API error: {e}")))?
+    };
 
     let body: serde_json::Value = resp
         .json()
         .await
         .map_err(|e| KittypawError::Skill(format!("Llm response parse error: {e}")))?;
 
-    let text = body["content"]
-        .as_array()
-        .and_then(|arr| arr.first())
-        .and_then(|block| block["text"].as_str())
-        .unwrap_or("")
-        .to_string();
+    let text = if is_openai_compat {
+        body["choices"]
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|c| c["message"]["content"].as_str())
+            .unwrap_or("")
+            .to_string()
+    } else {
+        body["content"]
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|block| block["text"].as_str())
+            .unwrap_or("")
+            .to_string()
+    };
 
     Ok(serde_json::json!({ "text": text }))
 }

@@ -95,6 +95,50 @@ pub fn SkillConfig(package: SkillPackage, on_close: EventHandler) -> Element {
                     }
                 }
 
+                // Model selector
+                {
+                    let model_names: Vec<String> = app_state
+                        .llm_registry
+                        .lock()
+                        .map(|r| r.list())
+                        .unwrap_or_default();
+                    let current_model = config_values.read().get("_model").cloned().unwrap_or_default();
+                    if !model_names.is_empty() {
+                        rsx! {
+                            div { style: "margin-bottom: 16px;",
+                                label { style: "display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 4px;",
+                                    "Model"
+                                }
+                                p { style: "font-size: 11px; color: #9ca3af; margin: 0 0 6px;",
+                                    "Override the LLM model used for this skill's Llm.generate calls."
+                                }
+                                select {
+                                    style: "width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 13px; outline: none; box-sizing: border-box; background: #fff;",
+                                    value: "{current_model}",
+                                    onchange: move |e| {
+                                        let val = e.value();
+                                        if val.is_empty() {
+                                            config_values.write().remove("_model");
+                                        } else {
+                                            config_values.write().insert("_model".to_string(), val);
+                                        }
+                                    },
+                                    option { value: "", "Default" }
+                                    for name in &model_names {
+                                        option {
+                                            value: "{name}",
+                                            selected: *name == current_model,
+                                            "{name}"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        rsx! {}
+                    }
+                }
+
                 // Save and Test Run buttons
                 div { style: "display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px;",
                     button {

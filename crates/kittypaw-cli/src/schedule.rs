@@ -333,6 +333,7 @@ pub async fn run_schedule_loop(
                                 preresolved,
                                 Some(&skill.name),
                                 Some(&mut checker),
+                                None,
                             )
                             .await;
                         }
@@ -487,12 +488,19 @@ pub async fn run_schedule_loop(
                                 Some(&pkg.meta.id),
                             );
                             let mut checker = kittypaw_core::capability::CapabilityChecker::from_package_permissions(&pkg.permissions);
+                            let pkg_model_override = pkg.model.as_deref().or_else(|| {
+                                config_values
+                                    .get("_model")
+                                    .map(String::as_str)
+                                    .filter(|s| !s.is_empty())
+                            });
                             let _ = crate::skill_executor::execute_skill_calls(
                                 &result.skill_calls,
                                 config,
                                 preresolved,
                                 Some(&pkg.meta.id),
                                 Some(&mut checker),
+                                pkg_model_override,
                             )
                             .await;
                         }
@@ -547,7 +555,9 @@ pub async fn run_schedule_loop(
                         if !pkg.chain.is_empty() {
                             if let Ok(chain_steps) = pkg_mgr.load_chain(pkg) {
                                 let mut prev_output = result.output.clone();
-                                for (chain_pkg, chain_js) in &chain_steps {
+                                for (step_idx, (chain_pkg, chain_js)) in
+                                    chain_steps.iter().enumerate()
+                                {
                                     let chain_config = pkg_mgr
                                         .get_config_with_defaults(&chain_pkg.meta.id)
                                         .unwrap_or_default();
@@ -570,12 +580,19 @@ pub async fn run_schedule_loop(
                                                         Some(&chain_pkg.meta.id),
                                                     );
                                                 let mut checker = kittypaw_core::capability::CapabilityChecker::from_package_permissions(&chain_pkg.permissions);
+                                                // Use per-step model override from chain definition
+                                                let chain_model = pkg
+                                                    .chain
+                                                    .get(step_idx)
+                                                    .and_then(|s| s.model.as_deref())
+                                                    .or_else(|| chain_pkg.model.as_deref());
                                                 let _ = crate::skill_executor::execute_skill_calls(
                                                     &chain_result.skill_calls,
                                                     &config,
                                                     preresolved,
                                                     Some(&chain_pkg.meta.id),
                                                     Some(&mut checker),
+                                                    chain_model,
                                                 )
                                                 .await;
                                             }
@@ -802,6 +819,7 @@ mod tests {
                 keyword: None,
             }),
             chain: vec![],
+            model: None,
         }
     }
 

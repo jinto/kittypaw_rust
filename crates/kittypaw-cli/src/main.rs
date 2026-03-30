@@ -368,7 +368,7 @@ async fn run_serve(bind_addr: &str) {
                             if !exec_result.skill_calls.is_empty() {
                                 let preresolved = crate::skill_executor::resolve_storage_calls(&exec_result.skill_calls, &store.lock().unwrap(), Some(&skill.name));
                                 let mut checker = kittypaw_core::capability::CapabilityChecker::from_skill_permissions(&skill.permissions);
-                                let _ = crate::skill_executor::execute_skill_calls(&exec_result.skill_calls, &config, preresolved, Some(&skill.name), Some(&mut checker)).await;
+                                let _ = crate::skill_executor::execute_skill_calls(&exec_result.skill_calls, &config, preresolved, Some(&skill.name), Some(&mut checker), None).await;
                             }
                             let output = if exec_result.output.is_empty() {
                                 "(no output)".to_string()
@@ -728,6 +728,7 @@ async fn run_skill_cli(name: &str, dry_run: bool) {
                                 preresolved,
                                 Some(&skill.name),
                                 Some(&mut checker),
+                                None,
                             )
                             .await
                             {

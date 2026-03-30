@@ -142,9 +142,11 @@
 - [ ] AI가 스킬 조합/수정해서 새 자동화 생성
 
 ### 모델 자동 라우팅 (사용자는 모름)
+- [x] `package.toml`에 `model` 필드 → 스킬별 모델 지정
+- [x] skill_config UI에 모델 선택 드롭다운
+- [x] execute_skill_calls에 model_override 전달 (체인 스텝 포함)
 - [ ] teach loop 키워드 분류기 (automation→경량, analysis→중간)
 - [ ] 대화 중 자동 모델 교체
-- [ ] `package.toml`에 `model` 필드 → 스킬별 모델 지정
 
 ### 기타 백로그
 - [ ] 웹 검색 프로바이더 폴백 체인 (Exa → DuckDuckGo)
