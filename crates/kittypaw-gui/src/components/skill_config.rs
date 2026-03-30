@@ -70,6 +70,13 @@ pub fn SkillConfig(package: SkillPackage, on_close: EventHandler) -> Element {
                         if let Some(hint) = &field.hint {
                             p { style: "font-size: 11px; color: #9ca3af; margin: 0 0 6px;", "{hint}" }
                         }
+                        if field.key == "telegram_token" || field.key == "chat_id" {
+                            if let Ok(Some(_)) = kittypaw_core::secrets::get_secret("channels", &field.key) {
+                                p { style: "font-size: 11px; color: #86EFAC; margin: 0 0 6px;",
+                                    "Settings에서 자동 입력됨"
+                                }
+                            }
+                        }
                         {
                             let key = field.key.clone();
                             let current_val = config_values.read().get(&key).cloned().unwrap_or_default();

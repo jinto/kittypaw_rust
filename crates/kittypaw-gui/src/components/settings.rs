@@ -24,6 +24,11 @@ pub fn SettingsDialog(on_close: EventHandler) -> Element {
     let mut local_model = use_signal(String::new);
     let mut local_saved = use_signal(|| false);
 
+    // Telegram channel signals
+    let mut tg_token = use_signal(String::new);
+    let mut tg_chat_id = use_signal(String::new);
+    let mut tg_saved = use_signal(|| false);
+
     // Load current key on mount
     {
         let app_state = app_state.clone();
@@ -43,11 +48,22 @@ pub fn SettingsDialog(on_close: EventHandler) -> Element {
             {
                 local_model.set(model);
             }
+
+            // Load stored Telegram channel config
+            if let Ok(Some(token)) =
+                kittypaw_core::secrets::get_secret("channels", "telegram_token")
+            {
+                tg_token.set(token);
+            }
+            if let Ok(Some(chat_id)) = kittypaw_core::secrets::get_secret("channels", "chat_id") {
+                tg_chat_id.set(chat_id);
+            }
         });
     }
 
     let app_state_save = app_state.clone();
     let app_state_local_save = app_state.clone();
+    let app_state_tg_save = app_state.clone();
 
     rsx! {
         // Tab panel — fills the main content area
@@ -172,6 +188,64 @@ pub fn SettingsDialog(on_close: EventHandler) -> Element {
                     "Ollama, LM Studio 등 OpenAI 호환 API 서버를 연결합니다."
                     br {}
                     "로컬 모델 연결 시 API 키 없이 무료로 사용할 수 있습니다."
+                }
+            }
+
+            // ── 채널 연결 section ──
+            div {
+                style: "background: #FFFFFF; border: 1px solid #E7E5E4; border-radius: 10px; padding: 24px; margin-top: 16px;",
+
+                div { style: "display: flex; align-items: center; gap: 8px; margin-bottom: 16px;",
+                    div { style: "flex: 1; height: 1px; background: #E7E5E4;" }
+                    span { style: "font-size: 12px; font-weight: 600; color: #78716C; white-space: nowrap;", "채널 연결 (Telegram)" }
+                    div { style: "flex: 1; height: 1px; background: #E7E5E4;" }
+                }
+
+                div { style: "margin-bottom: 12px;",
+                    label { style: "display: block; font-size: 13px; font-weight: 600; color: #1C1917; margin-bottom: 6px;", "봇 토큰" }
+                    input {
+                        style: "width: 100%; padding: 10px 12px; border: 1px solid #E7E5E4; border-radius: 6px; font-size: 13px; font-family: monospace; outline: none; box-sizing: border-box; background: #F5F3F0; color: #1C1917;",
+                        r#type: "password",
+                        placeholder: "1234567890:ABCdefGHIjklMNOpqrSTUvwxYZ",
+                        value: "{tg_token}",
+                        oninput: move |e| tg_token.set(e.value()),
+                    }
+                }
+
+                div { style: "margin-bottom: 14px;",
+                    label { style: "display: block; font-size: 13px; font-weight: 600; color: #1C1917; margin-bottom: 6px;", "채팅 ID" }
+                    input {
+                        style: "width: 100%; padding: 10px 12px; border: 1px solid #E7E5E4; border-radius: 6px; font-size: 13px; outline: none; box-sizing: border-box; background: #F5F3F0; color: #1C1917;",
+                        r#type: "text",
+                        placeholder: "-100123456789",
+                        value: "{tg_chat_id}",
+                        oninput: move |e| tg_chat_id.set(e.value()),
+                    }
+                }
+
+                div { style: "display: flex; justify-content: flex-end; margin-bottom: 14px;",
+                    button {
+                        style: "padding: 8px 20px; background: #1C1917; color: #F5F3F0; border: none; border-radius: 6px; font-size: 13px; cursor: pointer;",
+                        onclick: {
+                            let _state = app_state_tg_save.clone();
+                            move |_| {
+                                let token = tg_token.read().clone();
+                                let chat_id = tg_chat_id.read().clone();
+                                if !token.is_empty() {
+                                    let _ = kittypaw_core::secrets::set_secret("channels", "telegram_token", &token);
+                                }
+                                if !chat_id.is_empty() {
+                                    let _ = kittypaw_core::secrets::set_secret("channels", "chat_id", &chat_id);
+                                }
+                                tg_saved.set(true);
+                            }
+                        },
+                        if tg_saved() { "저장 완료" } else { "저장" }
+                    }
+                }
+
+                p { style: "font-size: 12px; color: #78716C; line-height: 1.5;",
+                    "스킬에서 공통으로 사용할 텔레그램 설정입니다. 개별 스킬에서 오버라이드할 수 있습니다."
                 }
             }
         }

@@ -230,7 +230,19 @@ impl PackageManager {
             }
         }
 
-        // Override with saved values
+        // Channel global keys that can be provided from Settings
+        const CHANNEL_KEYS: &[&str] = &["telegram_token", "chat_id"];
+
+        // Apply channel globals (overrides schema defaults, overridden by per-skill saved config)
+        for &key in CHANNEL_KEYS {
+            if let Ok(Some(global_val)) = crate::secrets::get_secret("channels", key) {
+                if !global_val.is_empty() {
+                    merged.insert(key.to_string(), global_val);
+                }
+            }
+        }
+
+        // Override with saved values (highest priority)
         merged.extend(saved);
 
         Ok(merged)
