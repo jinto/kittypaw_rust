@@ -17,3 +17,6 @@ CREATE TRIGGER IF NOT EXISTS execution_fts_delete BEFORE DELETE ON execution_his
     INSERT INTO execution_fts(execution_fts, rowid, skill_id, skill_name, result_summary)
     VALUES ('delete', old.id, old.skill_id, old.skill_name, old.result_summary);
 END;
+
+-- Backfill existing execution_history rows into FTS index
+INSERT INTO execution_fts(execution_fts) VALUES ('rebuild');

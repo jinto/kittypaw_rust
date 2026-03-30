@@ -283,6 +283,17 @@ pub async fn run_schedule_loop(
             }
         };
         let _ = store.cleanup_old_executions(30);
+        // Clean up execution.jsonl — delete if larger than 10MB
+        {
+            let log_path = data_dir.join("execution.jsonl");
+            if log_path.exists() {
+                if let Ok(metadata) = std::fs::metadata(&log_path) {
+                    if metadata.len() > 10_000_000 {
+                        let _ = std::fs::remove_file(&log_path);
+                    }
+                }
+            }
+        }
         if let Ok(skills) = kittypaw_core::skill::load_all_skills() {
             for (skill, js_code) in &skills {
                 if skill.trigger.trigger_type != "schedule" || !skill.enabled {

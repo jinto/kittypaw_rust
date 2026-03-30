@@ -493,6 +493,9 @@ impl Store {
 
     /// Full-text search across execution history
     pub fn search_executions(&self, query: &str, limit: usize) -> Result<Vec<ExecutionRecord>> {
+        // Wrap in double quotes to treat as phrase search and avoid FTS5 operator injection
+        // (e.g. "-foo", "foo:bar", "(foo)" would otherwise be misinterpreted)
+        let safe_query = format!("\"{}\"", query.replace('"', "\"\""));
         let mut stmt = self.conn.prepare(
             "SELECT e.id, e.skill_id, e.skill_name, e.started_at, e.duration_ms, e.result_summary, e.success, e.retry_count \
              FROM execution_history e \
@@ -501,7 +504,7 @@ impl Store {
              ORDER BY e.started_at DESC LIMIT ?2",
         )?;
         let records = stmt
-            .query_map(params![query, limit as i64], |row| {
+            .query_map(params![safe_query, limit as i64], |row| {
                 Ok(ExecutionRecord {
                     id: row.get(0)?,
                     skill_id: row.get(1)?,
