@@ -55,13 +55,8 @@ pub fn SettingsDialog(on_close: EventHandler) -> Element {
             style: "flex: 1; background: #F5F3F0; padding: 32px; overflow-y: auto;",
 
             // Page header
-            div { style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 28px;",
+            div { style: "margin-bottom: 28px;",
                 h1 { style: "font-size: 24px; font-weight: 600; color: #1C1917; margin: 0;", "Settings" }
-                button {
-                    style: "background: none; border: 1px solid #E7E5E4; border-radius: 6px; padding: 6px 14px; font-size: 13px; color: #78716C; cursor: pointer;",
-                    onclick: move |_| on_close.call(()),
-                    "Back"
-                }
             }
 
             // ── Anthropic API Key section ──

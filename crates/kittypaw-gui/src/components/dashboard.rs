@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-// ── Mock data types ──────────────────────────────────────────────────────────
+const SECTION_TITLE_STYLE: &str = "font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: #78716C; margin-bottom: 12px;";
 
 #[derive(Clone, PartialEq)]
 enum SkillStatus {
@@ -51,31 +51,18 @@ fn greeting_and_date() -> (&'static str, String) {
     let kst_days = (secs + 9 * 3600) / 86400;
     let (year, month, day, weekday) = days_to_ymd_weekday(kst_days);
 
-    let month_ko = match month {
-        1 => "1월",
-        2 => "2월",
-        3 => "3월",
-        4 => "4월",
-        5 => "5월",
-        6 => "6월",
-        7 => "7월",
-        8 => "8월",
-        9 => "9월",
-        10 => "10월",
-        11 => "11월",
-        _ => "12월",
-    };
-    let weekday_ko = match weekday {
-        0 => "월요일",
-        1 => "화요일",
-        2 => "수요일",
-        3 => "목요일",
-        4 => "금요일",
-        5 => "토요일",
-        _ => "일요일",
-    };
+    const WEEKDAYS: [&str; 7] = [
+        "월요일",
+        "화요일",
+        "수요일",
+        "목요일",
+        "금요일",
+        "토요일",
+        "일요일",
+    ];
+    let weekday_ko = WEEKDAYS[weekday as usize % 7];
 
-    let date_str = format!("{}년 {} {}일 {}", year, month_ko, day, weekday_ko);
+    let date_str = format!("{}년 {}월 {}일 {}", year, month, day, weekday_ko);
     (greeting, date_str)
 }
 
@@ -234,7 +221,7 @@ pub fn Dashboard() -> Element {
 
             // ── Skills section title ───────────────────────────────────────
             div {
-                style: "font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: #78716C; margin-bottom: 12px;",
+                style: "{SECTION_TITLE_STYLE}",
                 "Skills"
             }
 
@@ -267,11 +254,9 @@ pub fn Dashboard() -> Element {
                             div {
                                 key: "{i}",
                                 style: "display: grid; grid-template-columns: 8px 1fr 140px 80px; align-items: center; gap: 14px; padding: 10px 16px; border-bottom: {row_border}; font-size: 13px;",
-                                // Status dot
                                 div {
                                     style: "width: 8px; height: 8px; border-radius: 9999px; background: {dot_color}; box-shadow: {dot_shadow};",
                                 }
-                                // Name + last result
                                 div {
                                     div {
                                         style: "font-weight: 500; color: #1C1917;",
@@ -282,12 +267,10 @@ pub fn Dashboard() -> Element {
                                         "{last_result}"
                                     }
                                 }
-                                // Schedule
                                 div {
                                     style: "font-family: 'Geist Mono', 'SF Mono', monospace; font-size: 11px; color: #78716C;",
                                     "{schedule}"
                                 }
-                                // Status tag
                                 div {
                                     style: "font-size: 11px; padding: 2px 8px; border-radius: 9999px; font-weight: 500; background: {tag_bg}; color: {tag_color}; display: inline-block;",
                                     "{tag}"
@@ -318,7 +301,7 @@ pub fn Dashboard() -> Element {
 
             // ── Recent Activity section title ─────────────────────────────
             div {
-                style: "font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: #78716C; margin-bottom: 12px;",
+                style: "{SECTION_TITLE_STYLE}",
                 "Recent Activity"
             }
 
