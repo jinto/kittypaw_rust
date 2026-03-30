@@ -424,6 +424,7 @@ pub async fn run_schedule_loop(
         let packages_dir = std::path::PathBuf::from(".kittypaw/packages");
         if let Ok(packages) = kittypaw_core::package_manager::load_all_packages(&packages_dir) {
             let pkg_mgr = kittypaw_core::package_manager::PackageManager::new(packages_dir.clone());
+            let shared_ctx = store.list_shared_context().unwrap_or_default();
             for (pkg, js_code) in &packages {
                 let last_run = get_last_run(db_path, &pkg.meta.id);
                 if !is_package_due(pkg, last_run) {
@@ -447,7 +448,6 @@ pub async fn run_schedule_loop(
                 let config_values = pkg_mgr
                     .get_config_with_defaults_and_patterns(&pkg.meta.id, &pattern_defaults)
                     .unwrap_or_default();
-                let shared_ctx = store.list_shared_context().unwrap_or_default();
                 let event_payload = serde_json::json!({
                     "event_type": "schedule",
                 });

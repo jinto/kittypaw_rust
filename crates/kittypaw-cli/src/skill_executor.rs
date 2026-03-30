@@ -342,6 +342,13 @@ async fn execute_slack(call: &SkillCall) -> Result<serde_json::Value> {
             let channel_id = call.args.first().and_then(|v| v.as_str()).unwrap_or("");
             let text = call.args.get(1).and_then(|v| v.as_str()).unwrap_or("");
 
+            if channel_id.is_empty() {
+                return Err(KittypawError::Skill("Slack: missing channel_id".into()));
+            }
+            if text.is_empty() {
+                return Err(KittypawError::Skill("Slack: missing text".into()));
+            }
+
             let resp = client
                 .post("https://slack.com/api/chat.postMessage")
                 .header("Authorization", format!("Bearer {bot_token}"))
@@ -393,6 +400,13 @@ async fn execute_discord(call: &SkillCall) -> Result<serde_json::Value> {
             // ABI: Discord.sendMessage(channelId, text)
             let channel_id = call.args.first().and_then(|v| v.as_str()).unwrap_or("");
             let text = call.args.get(1).and_then(|v| v.as_str()).unwrap_or("");
+
+            if channel_id.is_empty() {
+                return Err(KittypawError::Skill("Discord: missing channel_id".into()));
+            }
+            if text.is_empty() {
+                return Err(KittypawError::Skill("Discord: missing text".into()));
+            }
 
             let url = format!("https://discord.com/api/v10/channels/{channel_id}/messages");
             let resp = client

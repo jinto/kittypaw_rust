@@ -83,8 +83,6 @@ pub fn SettingsDialog(on_close: EventHandler) -> Element {
     let app_state_save = app_state.clone();
     let app_state_local_save = app_state.clone();
     let app_state_tg_save = app_state.clone();
-    let _app_state_slack_save = app_state.clone();
-    let _app_state_discord_save = app_state.clone();
 
     rsx! {
         // Tab panel — fills the main content area

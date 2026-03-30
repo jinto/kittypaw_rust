@@ -552,7 +552,8 @@ impl Store {
              WHERE key NOT LIKE 'default:%' \
                AND key NOT LIKE 'suggest_%' \
                AND key NOT LIKE 'schedule_%' \
-               AND key NOT LIKE 'onboarding%'",
+               AND key NOT LIKE 'onboarding%' \
+               AND key NOT LIKE 'failure_hint:%'",
         )?;
         let map: HashMap<String, String> = stmt
             .query_map([], |row| {
