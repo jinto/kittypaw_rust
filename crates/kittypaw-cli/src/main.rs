@@ -7,9 +7,9 @@ use kittypaw_llm::registry::LlmRegistry;
 use tracing_subscriber::EnvFilter;
 
 use kittypaw_cli::agent_loop;
+use kittypaw_cli::schedule;
 use kittypaw_cli::skill_executor;
-mod schedule;
-mod teach_loop;
+use kittypaw_cli::teach_loop;
 
 use kittypaw_store::Store;
 
@@ -477,7 +477,16 @@ async fn run_serve(bind_addr: &str) {
                     continue;
                 }
 
-                match kittypaw_cli::assistant::run_assistant_turn(&event, &*provider, Arc::clone(&store), &[], None).await {
+                let assistant_ctx = kittypaw_cli::assistant::AssistantContext {
+                    event: &event,
+                    provider: &*provider,
+                    store: Arc::clone(&store),
+                    registry_entries: &[],
+                    sandbox: &sandbox,
+                    config: &config,
+                    on_token: None,
+                };
+                match kittypaw_cli::assistant::run_assistant_turn(&assistant_ctx).await {
                     Ok(turn) => {
                         let output = &turn.response_text;
                         match event_type {
@@ -1143,6 +1152,8 @@ async fn run_chat() {
         }
     };
 
+    let sandbox = kittypaw_sandbox::sandbox::Sandbox::new(config.sandbox.clone());
+
     println!("KittyPaw chat — type 'exit' or 'quit' to stop.\n");
 
     loop {
@@ -1172,15 +1183,16 @@ async fn run_chat() {
             payload: serde_json::json!({ "text": text, "workspace_id": "cli" }),
         };
 
-        match kittypaw_cli::assistant::run_assistant_turn(
-            &event,
-            &*provider,
-            Arc::clone(&store),
-            &registry_entries,
-            None,
-        )
-        .await
-        {
+        let assistant_ctx = kittypaw_cli::assistant::AssistantContext {
+            event: &event,
+            provider: &*provider,
+            store: Arc::clone(&store),
+            registry_entries: &registry_entries,
+            sandbox: &sandbox,
+            config: &config,
+            on_token: None,
+        };
+        match kittypaw_cli::assistant::run_assistant_turn(&assistant_ctx).await {
             Ok(turn) => println!("KittyPaw: {}\n", turn.response_text),
             Err(e) => eprintln!("Error: {e}\n"),
         }

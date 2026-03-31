@@ -1,7 +1,9 @@
 use dioxus::prelude::*;
 use futures_util::StreamExt;
-use kittypaw_cli::assistant::run_assistant_turn;
+use kittypaw_cli::assistant::{run_assistant_turn, AssistantContext};
+use kittypaw_core::config::Config;
 use kittypaw_core::types::{Event, EventType};
+use kittypaw_sandbox::sandbox::Sandbox;
 
 use crate::state::AppState;
 
@@ -42,9 +44,18 @@ pub fn ChatPanel() -> Element {
                     payload: serde_json::json!({ "text": user_msg }),
                 };
 
-                match run_assistant_turn(&event, provider.as_ref(), state.store.clone(), &[], None)
-                    .await
-                {
+                let config = Config::load().unwrap_or_default();
+                let sandbox = Sandbox::new_threaded(config.sandbox.clone());
+                let assistant_ctx = AssistantContext {
+                    event: &event,
+                    provider: provider.as_ref(),
+                    store: state.store.clone(),
+                    registry_entries: &[],
+                    sandbox: &sandbox,
+                    config: &config,
+                    on_token: None,
+                };
+                match run_assistant_turn(&assistant_ctx).await {
                     Ok(turn) => {
                         messages
                             .write()

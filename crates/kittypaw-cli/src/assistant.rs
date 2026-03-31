@@ -1,14 +1,18 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use kittypaw_core::config::Config;
 use kittypaw_core::error::Result;
 use kittypaw_core::registry::RegistryEntry;
 use kittypaw_core::types::{
     now_timestamp, AgentState, ConversationTurn, Event, EventType, LlmMessage, Role,
 };
 use kittypaw_llm::provider::LlmProvider;
+use kittypaw_sandbox::sandbox::Sandbox;
 use kittypaw_store::Store;
 use serde::{Deserialize, Serialize};
+
+use crate::teach_loop;
 
 /// Actions the assistant can take in response to user input.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,32 +77,61 @@ Available actions:
 - Preference keys should be descriptive: "preferred_channel", "location", "wake_up_time", etc.
 "#;
 
+/// Context for running an assistant turn. Bundles all dependencies.
+pub struct AssistantContext<'a> {
+    pub event: &'a Event,
+    pub provider: &'a dyn LlmProvider,
+    pub store: Arc<Mutex<Store>>,
+    pub registry_entries: &'a [RegistryEntry],
+    pub sandbox: &'a Sandbox,
+    pub config: &'a Config,
+    pub on_token: Option<Arc<dyn Fn(String) + Send + Sync>>,
+}
+
+fn extract_chat_id(event: &Event) -> String {
+    match event.event_type {
+        EventType::Telegram => event
+            .payload
+            .get("chat_id")
+            .map(|v| {
+                v.as_str()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| v.to_string())
+            })
+            .unwrap_or_else(|| "default".to_string()),
+        _ => "local".to_string(),
+    }
+}
+
+fn is_admin_event(event: &Event, config: &Config) -> bool {
+    if config.admin_chat_ids.is_empty() {
+        // Desktop/CLI are always admin, remote channels need explicit config
+        return matches!(event.event_type, EventType::Desktop);
+    }
+    let chat_id = extract_chat_id(event);
+    config.admin_chat_ids.iter().any(|id| id == &chat_id)
+}
+
 /// Run one turn of the assistant conversation.
-pub async fn run_assistant_turn(
-    event: &Event,
-    provider: &dyn LlmProvider,
-    store: Arc<Mutex<Store>>,
-    registry_entries: &[RegistryEntry],
-    on_token: Option<Arc<dyn Fn(String) + Send + Sync>>,
-) -> Result<AssistantTurn> {
-    let agent_id = assistant_id_for_event(event);
+pub async fn run_assistant_turn(ctx: &AssistantContext<'_>) -> Result<AssistantTurn> {
+    let agent_id = assistant_id_for_event(ctx.event);
 
     // Load conversation state
     let mut state = {
-        let s = store.lock().unwrap();
+        let s = ctx.store.lock().unwrap();
         s.load_state(&agent_id)?
             .unwrap_or_else(|| AgentState::new(&agent_id, SYSTEM_PROMPT))
     };
 
     // Load user context for personalization
     let user_context = {
-        let s = store.lock().unwrap();
+        let s = ctx.store.lock().unwrap();
         s.list_shared_context().unwrap_or_default()
     };
 
     // Build messages
-    let event_text = extract_text(event);
-    let messages = build_messages(&state, &event_text, &user_context, registry_entries);
+    let event_text = extract_text(ctx.event);
+    let messages = build_messages(&state, &event_text, &user_context, ctx.registry_entries);
 
     // Save user turn
     let user_turn = ConversationTurn {
@@ -110,15 +143,15 @@ pub async fn run_assistant_turn(
     };
     state.add_turn(user_turn.clone());
     {
-        let s = store.lock().unwrap();
+        let s = ctx.store.lock().unwrap();
         s.add_turn(&agent_id, &user_turn)?;
     }
 
     // Call LLM
-    let raw_response = if let Some(ref cb) = on_token {
-        provider.generate_stream(&messages, cb.clone()).await?
+    let raw_response = if let Some(ref cb) = ctx.on_token {
+        ctx.provider.generate_stream(&messages, cb.clone()).await?
     } else {
-        provider.generate(&messages).await?
+        ctx.provider.generate(&messages).await?
     };
 
     // Parse actions from response
@@ -133,7 +166,7 @@ pub async fn run_assistant_turn(
                 actions_taken.push(action.clone());
             }
             AssistantAction::SearchRegistry { query } => {
-                let results = search_entries(registry_entries, query);
+                let results = search_entries(ctx.registry_entries, query);
                 if results.is_empty() {
                     // No matches — feed back to LLM for follow-up
                     response_parts.push(format!("(레지스트리 검색 '{query}': 결과 없음)"));
@@ -147,7 +180,7 @@ pub async fn run_assistant_turn(
                 actions_taken.push(action.clone());
             }
             AssistantAction::RecommendSkill { skill_id, reason } => {
-                if let Some(entry) = registry_entries.iter().find(|e| e.id == *skill_id) {
+                if let Some(entry) = ctx.registry_entries.iter().find(|e| e.id == *skill_id) {
                     response_parts.push(format!(
                         "이 스킬을 추천해요: **{}** ({})\n{}\n\n설치할까요?",
                         entry.name, entry.id, reason
@@ -163,17 +196,58 @@ pub async fn run_assistant_turn(
                 description,
                 schedule,
             } => {
-                let schedule_info = schedule
-                    .as_ref()
-                    .map(|s| format!(" (스케줄: {s})"))
-                    .unwrap_or_default();
-                response_parts.push(format!(
-                    "새 스킬을 만들게요: {description}{schedule_info}\n잠시만 기다려주세요..."
-                ));
+                // Admin check for skill creation
+                if !is_admin_event(ctx.event, ctx.config) {
+                    response_parts.push(
+                        "스킬 생성 권한이 없습니다. admin_chat_ids 설정을 확인해주세요.".into(),
+                    );
+                    actions_taken.push(action.clone());
+                    continue;
+                }
+
+                let chat_id = extract_chat_id(ctx.event);
+                let full_description = if let Some(ref sched) = schedule {
+                    format!("{description} (schedule: {sched})")
+                } else {
+                    description.clone()
+                };
+
+                match teach_loop::handle_teach(
+                    &full_description,
+                    &chat_id,
+                    ctx.provider,
+                    ctx.sandbox,
+                    ctx.config,
+                )
+                .await
+                {
+                    Ok(
+                        ref result @ teach_loop::TeachResult::Generated {
+                            ref skill_name,
+                            ref dry_run_output,
+                            ..
+                        },
+                    ) => match teach_loop::approve_skill(result) {
+                        Ok(()) => {
+                            response_parts.push(format!(
+                                "스킬 **{skill_name}** 생성 완료!\n드라이런 결과: {dry_run_output}"
+                            ));
+                        }
+                        Err(e) => {
+                            response_parts.push(format!("스킬 저장 실패: {e}"));
+                        }
+                    },
+                    Ok(teach_loop::TeachResult::Error(e)) => {
+                        response_parts.push(format!("스킬 생성 실패: {e}"));
+                    }
+                    Err(e) => {
+                        response_parts.push(format!("오류 발생: {e}"));
+                    }
+                }
                 actions_taken.push(action.clone());
             }
             AssistantAction::SavePreference { key, value } => {
-                let s = store.lock().unwrap();
+                let s = ctx.store.lock().unwrap();
                 let _ = s.set_user_context(key, value, "assistant");
                 actions_taken.push(action.clone());
             }
@@ -209,7 +283,7 @@ pub async fn run_assistant_turn(
     };
     state.add_turn(assistant_turn.clone());
     {
-        let s = store.lock().unwrap();
+        let s = ctx.store.lock().unwrap();
         s.add_turn(&agent_id, &assistant_turn)?;
         s.save_state(&state)?;
     }

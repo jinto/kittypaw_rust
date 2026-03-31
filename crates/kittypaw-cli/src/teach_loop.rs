@@ -56,8 +56,8 @@ pub async fn handle_teach(
     sandbox: &Sandbox,
     config: &Config,
 ) -> Result<TeachResult> {
-    // Admin check
-    if !config.admin_chat_ids.is_empty() && !config.admin_chat_ids.iter().any(|id| id == chat_id) {
+    // Admin check (deny-by-default: empty list blocks all)
+    if config.admin_chat_ids.is_empty() || !config.admin_chat_ids.iter().any(|id| id == chat_id) {
         return Ok(TeachResult::Error(
             "Permission denied: you are not an admin.".into(),
         ));
@@ -77,6 +77,7 @@ pub async fn handle_teach(
 
     let raw_code = provider.generate(&messages).await?;
     let code = strip_code_fences(&raw_code);
+    validate_generated_code(&code)?;
 
     // Dry-run in sandbox with mock context
     let mock_context = serde_json::json!({
@@ -220,8 +221,39 @@ fn detect_schedule(text: &str) -> bool {
         "every month",
         "scheduled",
         "cron",
+        // Korean keywords
+        "매일",
+        "매시간",
+        "매주",
+        "매월",
+        "아침",
+        "저녁",
+        "밤",
+        "월요일",
+        "화요일",
+        "수요일",
+        "목요일",
+        "금요일",
+        "토요일",
+        "일요일",
+        "하루에",
+        "시간마다",
+        "분마다",
     ];
     SCHEDULE_KEYWORDS.iter().any(|kw| lower.contains(kw))
+}
+
+/// Validate generated code for dangerous patterns.
+/// Returns Err if Http and Storage are used together (data exfiltration risk).
+fn validate_generated_code(code: &str) -> Result<()> {
+    let has_http = code.contains("Http.");
+    let has_storage = code.contains("Storage.");
+    if has_http && has_storage {
+        return Err(KittypawError::Skill(
+            "Security: skills using both Http and Storage require manual review".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn detect_permissions(code: &str) -> Vec<String> {
@@ -281,5 +313,41 @@ mod tests {
         let code = "Telegram.sendMessage(); Http.get(); Storage.set(); Llm.generate();";
         let perms = detect_permissions(code);
         assert_eq!(perms.len(), 4);
+    }
+
+    #[test]
+    fn test_validate_generated_code_allows_http_only() {
+        let code = r#"const resp = await Http.get("https://example.com");"#;
+        assert!(validate_generated_code(code).is_ok());
+    }
+
+    #[test]
+    fn test_validate_generated_code_allows_storage_only() {
+        let code = r#"const val = await Storage.get("key");"#;
+        assert!(validate_generated_code(code).is_ok());
+    }
+
+    #[test]
+    fn test_validate_generated_code_blocks_http_and_storage() {
+        let code = r#"
+            const resp = await Http.get("https://example.com");
+            await Storage.set("data", resp.body);
+        "#;
+        let result = validate_generated_code(code);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Http") && err.contains("Storage"));
+    }
+
+    #[test]
+    fn test_detect_schedule_korean() {
+        assert!(detect_schedule("매일 아침 날씨 알려줘"));
+        assert!(detect_schedule("매주 월요일에 보고서 보내줘"));
+        assert!(detect_schedule("매시간마다 체크해줘"));
+        assert!(detect_schedule("하루에 한 번 실행해줘"));
+        assert!(detect_schedule("분마다 확인해줘"));
+        assert!(detect_schedule("저녁에 알람 보내줘"));
+        assert!(detect_schedule("토요일마다 정리해줘"));
+        assert!(!detect_schedule("날씨 알려줘"));
     }
 }
