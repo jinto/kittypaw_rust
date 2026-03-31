@@ -202,6 +202,8 @@ async fn main() {
 }
 
 async fn run_serve(bind_addr: &str) {
+    use kittypaw_channels::channel::Channel;
+    use kittypaw_channels::telegram::TelegramChannel;
     use kittypaw_channels::websocket::ServeWebSocketChannel;
     use kittypaw_core::types::EventType;
 
@@ -232,6 +234,28 @@ async fn run_serve(bind_addr: &str) {
             eprintln!("Failed to start WebSocket channel: {e}");
             std::process::exit(1);
         });
+
+    // Start Telegram channel if configured
+    let telegram_token = std::env::var("KITTYPAW_TELEGRAM_TOKEN")
+        .ok()
+        .or_else(|| {
+            config
+                .channels
+                .iter()
+                .find(|c| c.channel_type == "telegram")
+                .map(|c| c.token.clone())
+        })
+        .unwrap_or_default();
+    if !telegram_token.is_empty() {
+        let tg_channel = TelegramChannel::new(&telegram_token);
+        let tg_tx = event_tx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = tg_channel.start(tg_tx).await {
+                tracing::error!("Telegram channel error: {e}");
+            }
+        });
+        eprintln!("Telegram bot polling started.");
+    }
 
     eprintln!(
         "kittypaw serve started. WebSocket at ws://{}/ws/chat",
@@ -429,29 +453,38 @@ async fn run_serve(bind_addr: &str) {
                     continue;
                 }
 
-                match agent_loop::run_agent_loop(event, &*provider, &sandbox, Arc::clone(&store), &config, None, None).await {
-                    Ok(output) => {
-                        // Route response back to originating channel
+                match kittypaw_cli::assistant::run_assistant_turn(&event, &*provider, Arc::clone(&store), &[], None).await {
+                    Ok(turn) => {
+                        let output = &turn.response_text;
                         match event_type {
                             EventType::WebChat => {
-                                if let Err(e) = ws_channel.send_to_session(&session_id, &output).await {
+                                if let Err(e) = ws_channel.send_to_session(&session_id, output).await {
                                     tracing::warn!("Failed to send WebSocket response: {e}");
                                 }
                             }
                             EventType::Telegram => {
-                                // Other channels handle their own responses via skill calls
-                                tracing::info!("Agent response for {session_id}: {output}");
+                                send_telegram_message(&config, &session_id, output).await;
                             }
                             EventType::Desktop => {
-                                tracing::info!("Desktop agent response for {session_id}: {output}");
+                                tracing::info!("Desktop assistant response for {session_id}: {output}");
                             }
                         }
                     }
                     Err(e) => {
-                        tracing::error!("Agent loop error for session {session_id}: {e}");
-                        let _ = ws_channel
-                            .send_to_session(&session_id, &format!("Error: {e}"))
-                            .await;
+                        tracing::error!("Assistant error for session {session_id}: {e}");
+                        match event_type {
+                            EventType::WebChat => {
+                                let _ = ws_channel
+                                    .send_to_session(&session_id, &format!("Error: {e}"))
+                                    .await;
+                            }
+                            EventType::Telegram => {
+                                send_telegram_message(&config, &session_id, &format!("Error: {e}")).await;
+                            }
+                            EventType::Desktop => {
+                                tracing::error!("Desktop assistant error for {session_id}: {e}");
+                            }
+                        }
                     }
                 }
             }
