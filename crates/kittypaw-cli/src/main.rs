@@ -99,6 +99,8 @@ enum Commands {
     },
     /// Initialize KittyPaw configuration
     Init,
+    /// Interactive chat with KittyPaw assistant
+    Chat,
 }
 
 #[derive(Subcommand)]
@@ -189,6 +191,9 @@ async fn main() {
         }
         Some(Commands::Init) => {
             run_init();
+        }
+        Some(Commands::Chat) => {
+            run_chat().await;
         }
         None => {
             run_stdin().await;
@@ -1051,6 +1056,78 @@ Next steps:
   kittypaw serve                            # Start the bot server
   kittypaw skills list                      # View taught skills"#
     );
+}
+
+async fn run_chat() {
+    use kittypaw_core::types::{Event, EventType};
+    use std::io::Write;
+
+    let config = kittypaw_core::config::Config::load().unwrap_or_else(|e| {
+        eprintln!("Config error: {e}");
+        std::process::exit(1);
+    });
+
+    let provider = require_provider(&config);
+
+    let db_path = std::env::var("KITTYPAW_DB_PATH").unwrap_or_else(|_| "kittypaw.db".into());
+    let store = Arc::new(Mutex::new(Store::open(&db_path).unwrap_or_else(|e| {
+        eprintln!("Database error: {e}");
+        std::process::exit(1);
+    })));
+
+    // Fetch registry entries; fall back to empty vec on error
+    let cache_dir = std::env::temp_dir().join("kittypaw-registry-cache");
+    let registry_client = kittypaw_core::registry::RegistryClient::new(&cache_dir);
+    let registry_entries = match registry_client.fetch_index().await {
+        Ok(index) => index.packages,
+        Err(e) => {
+            tracing::warn!("Failed to fetch registry: {e}");
+            vec![]
+        }
+    };
+
+    println!("KittyPaw chat — type 'exit' or 'quit' to stop.\n");
+
+    loop {
+        print!("You: ");
+        std::io::stdout().flush().unwrap_or_default();
+
+        let mut line = String::new();
+        match std::io::stdin().read_line(&mut line) {
+            Ok(0) => break, // EOF / Ctrl+D
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("Read error: {e}");
+                break;
+            }
+        }
+
+        let text = line.trim().to_string();
+        if text.is_empty() {
+            continue;
+        }
+        if text == "exit" || text == "quit" {
+            break;
+        }
+
+        let event = Event {
+            event_type: EventType::Desktop,
+            payload: serde_json::json!({ "text": text, "workspace_id": "cli" }),
+        };
+
+        match kittypaw_cli::assistant::run_assistant_turn(
+            &event,
+            &*provider,
+            Arc::clone(&store),
+            &registry_entries,
+            None,
+        )
+        .await
+        {
+            Ok(turn) => println!("KittyPaw: {}\n", turn.response_text),
+            Err(e) => eprintln!("Error: {e}\n"),
+        }
+    }
 }
 
 async fn run_stdin() {

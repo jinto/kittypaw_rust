@@ -26,7 +26,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # Internal crates
-kittypaw-core = { path = "crates/kittypaw-core" }
+kittypaw-core = { path = "crates/kittypaw-core", features = ["registry"] }
 kittypaw-llm = { path = "crates/kittypaw-llm" }
 kittypaw-sandbox = { path = "crates/kittypaw-sandbox" }
 kittypaw-store = { path = "crates/kittypaw-store" }

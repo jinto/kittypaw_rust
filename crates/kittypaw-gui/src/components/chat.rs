@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 use futures_util::StreamExt;
-use kittypaw_core::types::{LlmMessage, Role};
+use kittypaw_cli::assistant::run_assistant_turn;
+use kittypaw_core::types::{Event, EventType};
 
 use crate::state::AppState;
 
@@ -34,33 +35,19 @@ pub fn ChatPanel() -> Element {
                     }
                 };
 
-                // Build conversation history for context
-                let mut llm_messages = vec![LlmMessage {
-                    role: Role::System,
-                    content: "You are KittyPaw, a helpful AI assistant.".into(),
-                }];
+                // Construct a Desktop Event from the user message
+                let event = Event {
+                    event_type: EventType::Desktop,
+                    payload: serde_json::json!({ "text": user_msg }),
+                };
 
-                // Include previous messages for context
-                for (role, content) in messages.read().iter() {
-                    let r = match role.as_str() {
-                        "user" => Role::User,
-                        _ => Role::Assistant,
-                    };
-                    llm_messages.push(LlmMessage {
-                        role: r,
-                        content: content.clone(),
-                    });
-                }
-
-                // Add current user message
-                llm_messages.push(LlmMessage {
-                    role: Role::User,
-                    content: user_msg,
-                });
-
-                match provider.generate(&llm_messages).await {
-                    Ok(response) => {
-                        messages.write().push(("assistant".into(), response));
+                match run_assistant_turn(&event, provider.as_ref(), state.store.clone(), &[], None)
+                    .await
+                {
+                    Ok(turn) => {
+                        messages
+                            .write()
+                            .push(("assistant".into(), turn.response_text));
                     }
                     Err(e) => {
                         messages
