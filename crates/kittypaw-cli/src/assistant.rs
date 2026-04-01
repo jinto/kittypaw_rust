@@ -70,11 +70,13 @@ Available actions:
 
 ## Rules
 - ALWAYS respond with a valid JSON array, even for simple replies: `[{"action": "reply", "text": "안녕하세요!"}]`
-- You can chain multiple actions: search first, then reply based on results
-- When a user describes an automation need, ALWAYS search the registry first before creating
+- ALWAYS include at least one "reply" action with a natural response to the user. NEVER return only search_registry or other non-reply actions.
+- When a user describes an automation need, ask clarifying questions first (what channel? what schedule? what data source?), then offer to create a skill.
+- Do NOT use search_registry — the skill registry is not yet populated. Instead, offer to create new skills directly.
 - Ask clarifying questions when the request is ambiguous
 - Save preferences when you learn something reusable (location, preferred channels, schedule patterns)
 - Preference keys should be descriptive: "preferred_channel", "location", "wake_up_time", etc.
+- For simple questions or greetings, just reply naturally without trying to create skills.
 "#;
 
 /// Context for running an assistant turn. Bundles all dependencies.
@@ -174,8 +176,9 @@ pub async fn run_assistant_turn(ctx: &AssistantContext<'_>) -> Result<AssistantT
             AssistantAction::SearchRegistry { query } => {
                 let results = search_entries(ctx.registry_entries, query);
                 if results.is_empty() {
-                    // No matches — feed back to LLM for follow-up
-                    response_parts.push(format!("(레지스트리 검색 '{query}': 결과 없음)"));
+                    response_parts.push(
+                        "아직 스킬 레지스트리에 맞는 스킬이 없어요. 새로 만들어드릴까요? 필요한 정보를 알려주세요!".to_string()
+                    );
                 } else {
                     let listing: Vec<String> = results
                         .iter()

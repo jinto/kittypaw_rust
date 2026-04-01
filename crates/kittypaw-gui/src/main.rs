@@ -59,6 +59,8 @@ fn main() {
         }
     }
 
+    let has_cloud_provider = llm_registry.default_provider().is_some();
+
     let local_url = std::env::var("KITTYPAW_LOCAL_URL").ok();
     let local_model = std::env::var("KITTYPAW_LOCAL_MODEL").ok();
     if let (Some(url), Some(model)) = (local_url, local_model) {
@@ -71,7 +73,9 @@ fn main() {
                 4096,
             )),
         );
-        llm_registry.set_default("local");
+        if !has_cloud_provider {
+            llm_registry.set_default("local");
+        }
     } else {
         // If no env vars, try keychain
         if let (Ok(Some(url)), Ok(Some(model))) = (
@@ -88,7 +92,9 @@ fn main() {
                         4096,
                     )),
                 );
-                llm_registry.set_default("local");
+                if !has_cloud_provider {
+                    llm_registry.set_default("local");
+                }
             }
         }
     }
