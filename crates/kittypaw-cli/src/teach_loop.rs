@@ -244,14 +244,13 @@ fn detect_schedule(text: &str) -> bool {
 }
 
 /// Validate generated code for dangerous patterns.
-/// Returns Err if Http and Storage are used together (data exfiltration risk).
+/// Http+Storage combos are now allowed — the sandbox already provides
+/// allowed_hosts and storage namespace isolation at runtime.
 fn validate_generated_code(code: &str) -> Result<()> {
     let has_http = code.contains("Http.");
     let has_storage = code.contains("Storage.");
     if has_http && has_storage {
-        return Err(KittypawError::Skill(
-            "Security: skills using both Http and Storage require manual review".into(),
-        ));
+        tracing::info!("Skill uses both Http and Storage — allowed (sandbox-guarded)");
     }
     Ok(())
 }
@@ -328,15 +327,12 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_generated_code_blocks_http_and_storage() {
+    fn test_validate_generated_code_allows_http_and_storage() {
         let code = r#"
             const resp = await Http.get("https://example.com");
             await Storage.set("data", resp.body);
         "#;
-        let result = validate_generated_code(code);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("Http") && err.contains("Storage"));
+        assert!(validate_generated_code(code).is_ok());
     }
 
     #[test]

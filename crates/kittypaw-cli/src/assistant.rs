@@ -55,7 +55,7 @@ const SYSTEM_PROMPT: &str = r#"You are KittyPaw, a friendly personal AI assistan
 ## What You Can Do
 You help users by understanding their needs and either:
 1. **Recommending existing skills** from the registry if one matches
-2. **Creating new skills** when nothing exists — by asking clarifying questions first
+2. **Creating new skills** — immediately when the request is specific enough
 3. **Remembering preferences** so future interactions are personalized
 
 ## How to Respond
@@ -72,9 +72,11 @@ Available actions:
 ## Rules
 - ALWAYS respond with a valid JSON array, even for simple replies: `[{"action": "reply", "text": "안녕하세요!"}]`
 - ALWAYS include at least one "reply" action with a natural response to the user. NEVER return only search_registry or other non-reply actions.
-- When a user describes an automation need, ask clarifying questions first (what channel? what schedule? what data source?), then offer to create a skill.
-- Do NOT use search_registry — the skill registry is not yet populated. Instead, offer to create new skills directly.
-- Ask clarifying questions when the request is ambiguous
+- When a user names specific skills or says "만들어줘" / "build" / "create", emit create_skill actions IMMEDIATELY for each one. Do NOT ask questions first. Act now.
+- If a user asks for multiple skills at once, include ALL of them as separate create_skill actions in your JSON response array.
+- Only ask clarifying questions if the request is truly vague (no task names, no clear purpose).
+- You MUST use actions to take action — do not just describe or list what you would do. Execute it now.
+- Do NOT use search_registry — the skill registry is not yet populated. Instead, create new skills directly.
 - Save preferences when you learn something reusable (location, preferred channels, schedule patterns)
 - Preference keys should be descriptive: "preferred_channel", "location", "wake_up_time", etc.
 - For simple questions or greetings, just reply naturally without trying to create skills.
@@ -472,6 +474,7 @@ fn extract_text(event: &Event) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kittypaw_llm::openai::OpenAiProvider;
 
     #[test]
     fn test_parse_actions_json_array() {
@@ -583,6 +586,72 @@ mod tests {
         assert_eq!(
             format!("assistant-{}", event.session_id()),
             "assistant-default"
+        );
+    }
+
+    /// Integration test: verify the LLM returns multiple create_skill actions
+    /// when asked to build a batch of skills.
+    /// Run with: OPENROUTER_API_KEY=sk-or-... cargo test -p kittypaw-cli test_batch_skill_creation -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore]
+    async fn test_batch_skill_creation() {
+        let api_key = match std::env::var("OPENROUTER_API_KEY") {
+            Ok(k) if !k.is_empty() => k,
+            _ => {
+                eprintln!("OPENROUTER_API_KEY not set, skipping integration test");
+                return;
+            }
+        };
+        let provider = OpenAiProvider::with_base_url(
+            "https://openrouter.ai/api/v1".into(),
+            api_key,
+            "nvidia/nemotron-3-super-120b-a12b:free".into(),
+            4096,
+        );
+        let messages = vec![
+            LlmMessage {
+                role: Role::System,
+                content: SYSTEM_PROMPT.to_string(),
+            },
+            LlmMessage {
+                role: Role::User,
+                content: "콘텐츠 자동화 시스템을 만들어줘: 브랜드 보이스, 인용 트윗 생성기, \
+                    X 아티클 작성기, YouTube→트윗 변환, CTA 생성기, 트렌드 리서치. \
+                    총 6개 스킬을 지금 바로 만들어줘."
+                    .to_string(),
+            },
+        ];
+        let raw = provider.generate(&messages).await.expect("LLM call failed");
+        let actions = parse_actions(&raw);
+        let create_count = actions
+            .iter()
+            .filter(|a| matches!(a, AssistantAction::CreateSkill { .. }))
+            .count();
+        eprintln!("--- LLM raw response ---\n{raw}\n");
+        eprintln!(
+            "--- parsed actions: {} total, {} create_skill ---",
+            actions.len(),
+            create_count
+        );
+        for (i, action) in actions.iter().enumerate() {
+            match action {
+                AssistantAction::CreateSkill { description, .. } => {
+                    eprintln!("  [{i}] create_skill: {description}");
+                }
+                AssistantAction::Reply { text } => {
+                    eprintln!("  [{i}] reply: {}...", &text[..text.len().min(80)]);
+                }
+                AssistantAction::AskQuestion { question, .. } => {
+                    eprintln!("  [{i}] ask_question: {question}");
+                }
+                other => {
+                    eprintln!("  [{i}] {:?}", other);
+                }
+            }
+        }
+        assert!(
+            create_count >= 3,
+            "expected >=3 create_skill actions, got {create_count}"
         );
     }
 }
