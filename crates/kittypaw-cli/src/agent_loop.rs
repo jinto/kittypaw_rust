@@ -262,33 +262,20 @@ pub async fn run_agent_loop(
 }
 
 fn build_prompt(state: &AgentState, event_text: &str) -> Vec<LlmMessage> {
+    use crate::compaction::{compact_turns, CompactionConfig, CompactionMode};
+
     let mut messages = vec![LlmMessage {
         role: Role::System,
         content: SYSTEM_PROMPT.to_string(),
     }];
 
-    // Add conversation history (last 20 turns)
-    for turn in state.recent_turns(20) {
-        match turn.role {
-            Role::User => {
-                let mut content = turn.content.clone();
-                if let Some(ref result) = turn.result {
-                    content.push_str(&format!("\n[Previous result: {result}]"));
-                }
-                messages.push(LlmMessage {
-                    role: Role::User,
-                    content,
-                });
-            }
-            Role::Assistant => {
-                messages.push(LlmMessage {
-                    role: Role::Assistant,
-                    content: turn.code.clone().unwrap_or(turn.content.clone()),
-                });
-            }
-            Role::System => {}
-        }
-    }
+    // Add compacted conversation history (3-stage: summary / truncated / full)
+    let compacted = compact_turns(
+        &state.turns,
+        &CompactionConfig::default(),
+        &CompactionMode::AgentLoop,
+    );
+    messages.extend(compacted);
 
     // Current event
     messages.push(LlmMessage {

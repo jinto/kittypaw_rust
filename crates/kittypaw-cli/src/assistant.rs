@@ -348,25 +348,15 @@ fn build_messages(
         });
     }
 
-    // Add conversation history (last 20 turns)
-    for turn in state.recent_turns(20) {
-        match turn.role {
-            Role::User => {
-                messages.push(LlmMessage {
-                    role: Role::User,
-                    content: turn.content.clone(),
-                });
-            }
-            Role::Assistant => {
-                // Feed back the raw actions JSON if available, otherwise the text
-                let content = turn.result.clone().unwrap_or_else(|| turn.content.clone());
-                messages.push(LlmMessage {
-                    role: Role::Assistant,
-                    content,
-                });
-            }
-            Role::System => {}
-        }
+    // Add compacted conversation history (3-stage: summary / truncated / full)
+    {
+        use crate::compaction::{compact_turns, CompactionConfig, CompactionMode};
+        let compacted = compact_turns(
+            &state.turns,
+            &CompactionConfig::default(),
+            &CompactionMode::Assistant,
+        );
+        messages.extend(compacted);
     }
 
     // Current user message
