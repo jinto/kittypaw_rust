@@ -157,7 +157,7 @@
 - [ ] agentskills.io 호환 검토 (Pi/Claude Code/Codex CLI 공용 스킬 포맷)
 
 ### Agent Runtime Hardening (Claude Code 분석 참고)
-- [ ] `agent_loop.rs` 상태 전이 명시화 (`generate` → `execute` → `retry` → `finish`) + transition reason 로그
+- [x] `agent_loop.rs` 상태 전이 명시화 (`generate` → `execute` → `retry` → `finish`) + transition reason 로그
 - [ ] 단계별 컨텍스트 압축: 최근 턴 유지 + tool/output 축약 + 오래된 대화 요약
 - [ ] sandbox file/network permission popup wiring 완료 (`AskUser`, `AllowOnce`, `AllowPermanent`)
 - [ ] 기능 플래그 / kill switch 레이어 (background agents, model routing, experimental channels)

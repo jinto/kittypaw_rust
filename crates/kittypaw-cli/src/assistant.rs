@@ -6,7 +6,8 @@ use kittypaw_core::config::Config;
 use kittypaw_core::error::Result;
 use kittypaw_core::registry::RegistryEntry;
 use kittypaw_core::types::{
-    now_timestamp, AgentState, ConversationTurn, Event, EventType, LlmMessage, Role,
+    now_timestamp, AgentState, ConversationTurn, Event, EventType, LlmMessage, LoopPhase, Role,
+    TransitionReason,
 };
 use kittypaw_llm::provider::LlmProvider;
 use kittypaw_sandbox::sandbox::Sandbox;
@@ -131,6 +132,7 @@ pub async fn run_assistant_turn(ctx: &AssistantContext<'_>) -> Result<AssistantT
             }
         }
     };
+    tracing::info!(phase = ?LoopPhase::Init, agent_id = %agent_id, "assistant state ready");
 
     // Load user context for personalization
     let user_context = {
@@ -163,8 +165,11 @@ pub async fn run_assistant_turn(ctx: &AssistantContext<'_>) -> Result<AssistantT
         ctx.provider.generate(&messages).await?
     };
 
+    tracing::info!(phase = ?LoopPhase::Generate, agent_id = %agent_id, response_len = raw_response.len(), "llm response received");
+
     // Parse actions from response
     let actions = parse_actions(&raw_response);
+    tracing::info!(phase = ?LoopPhase::Execute, agent_id = %agent_id, action_count = actions.len(), "actions parsed");
     let mut response_parts: Vec<String> = Vec::new();
     let mut actions_taken: Vec<AssistantAction> = Vec::new();
 
@@ -297,6 +302,7 @@ pub async fn run_assistant_turn(ctx: &AssistantContext<'_>) -> Result<AssistantT
         s.add_turn(&agent_id, &assistant_turn)?;
         s.save_state(&state)?;
     }
+    tracing::info!(phase = ?LoopPhase::Finish, agent_id = %agent_id, response_len = response_text.len(), actions = actions_taken.len(), "assistant turn complete");
 
     Ok(AssistantTurn {
         response_text,

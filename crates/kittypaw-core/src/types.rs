@@ -98,6 +98,45 @@ pub enum EventType {
     Desktop,
 }
 
+/// Phase of an agent execution loop — used for structured observability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LoopPhase {
+    Init,
+    Prompt,
+    Generate,
+    Execute,
+    Retry,
+    Finish,
+}
+
+/// Why the loop transitioned between phases.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "reason", rename_all = "snake_case")]
+pub enum TransitionReason {
+    StateReady,
+    PromptBuilt {
+        message_count: usize,
+    },
+    CodeGenerated {
+        code_len: usize,
+    },
+    ExecutionSuccess {
+        output_len: usize,
+        skill_calls: usize,
+    },
+    ExecutionFailed {
+        error: String,
+        attempt: usize,
+    },
+    RetriesExhausted {
+        error: String,
+    },
+    ActionsParsed {
+        action_count: usize,
+    },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmMessage {
     pub role: Role,

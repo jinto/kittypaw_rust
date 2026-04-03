@@ -6,7 +6,7 @@ use kittypaw_core::error::{KittypawError, Result};
 use kittypaw_core::permission::{PermissionDecision, PermissionRequest};
 use kittypaw_core::types::{
     now_timestamp, AgentState, ConversationTurn, Event, EventType, ExecutionResult, LlmMessage,
-    Role,
+    LoopPhase, Role,
 };
 use kittypaw_llm::provider::LlmProvider;
 use kittypaw_sandbox::sandbox::Sandbox;
@@ -84,9 +84,12 @@ pub async fn run_agent_loop(
         }
     };
 
+    tracing::info!(phase = ?LoopPhase::Init, agent_id = %agent_id, "agent state ready");
+
     // Build prompt messages
     let event_text = format_event(&event);
     let messages = build_prompt(&state, &event_text);
+    tracing::info!(phase = ?LoopPhase::Prompt, agent_id = %agent_id, message_count = messages.len(), "prompt built");
 
     // Add user turn
     let user_turn = ConversationTurn {
@@ -134,6 +137,7 @@ pub async fn run_agent_loop(
                 .await?
         };
         tracing::debug!("Generated JS ({} chars)", code.len());
+        tracing::info!(phase = ?LoopPhase::Generate, agent_id = %agent_id, code_len = code.len(), attempt, "code generated");
 
         // Execute in sandbox
         let context = serde_json::json!({
@@ -203,6 +207,8 @@ pub async fn run_agent_loop(
                 exec_result.output.clone()
             };
 
+            tracing::info!(phase = ?LoopPhase::Finish, agent_id = %agent_id, output_len = output.len(), skill_calls = exec_result.skill_calls.len(), "execution success");
+
             let assistant_turn = ConversationTurn {
                 role: Role::Assistant,
                 content: output.clone(),
@@ -223,6 +229,7 @@ pub async fn run_agent_loop(
         // Error — retry with feedback
         let err_msg = exec_result.error.unwrap_or("unknown error".into());
         tracing::warn!("Execution error (attempt {attempt}): {err_msg}");
+        tracing::info!(phase = ?LoopPhase::Retry, agent_id = %agent_id, attempt, error = %err_msg, "execution failed, retrying");
         last_error = Some(err_msg);
 
         // Add the failed attempt as assistant message for context
@@ -234,6 +241,7 @@ pub async fn run_agent_loop(
 
     // All retries exhausted
     let err_msg = last_error.unwrap_or("unknown error".into());
+    tracing::info!(phase = ?LoopPhase::Finish, agent_id = %agent_id, error = %err_msg, "retries exhausted");
     let assistant_turn = ConversationTurn {
         role: Role::Assistant,
         content: format!("Error after {MAX_RETRIES} retries: {err_msg}"),
