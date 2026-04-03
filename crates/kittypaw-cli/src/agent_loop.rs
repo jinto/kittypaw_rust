@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use kittypaw_core::capability::CapabilityChecker;
 use kittypaw_core::error::{KittypawError, Result};
@@ -72,7 +73,7 @@ pub async fn run_agent_loop(
 
     // Load or create agent state — ensure agent exists in DB before adding turns.
     let mut state = {
-        let s = store.lock().unwrap();
+        let s = store.lock().await;
         match s.load_state(&agent_id)? {
             Some(existing) => existing,
             None => {
@@ -97,7 +98,7 @@ pub async fn run_agent_loop(
     };
     state.add_turn(user_turn.clone());
     {
-        let s = store.lock().unwrap();
+        let s = store.lock().await;
         s.add_turn(&agent_id, &user_turn)?;
     }
 
@@ -146,7 +147,7 @@ pub async fn run_agent_loop(
         //
         // Build a CapabilityChecker from the matching agent config.
         // If no agent config matches, the checker is None (permissive mode).
-        let checker: Option<Arc<Mutex<CapabilityChecker>>> = {
+        let checker: Option<Arc<std::sync::Mutex<CapabilityChecker>>> = {
             let agent_config = config.agents.iter().find(|a| {
                 a.id == agent_id
                     || (agent_id.starts_with("telegram-")
@@ -155,7 +156,11 @@ pub async fn run_agent_loop(
                     || (agent_id.starts_with("desktop-")
                         && a.channels.iter().any(|c| c == "desktop"))
             });
-            agent_config.map(|ac| Arc::new(Mutex::new(CapabilityChecker::from_agent_config(ac))))
+            agent_config.map(|ac| {
+                Arc::new(std::sync::Mutex::new(CapabilityChecker::from_agent_config(
+                    ac,
+                )))
+            })
         };
 
         let store_for_resolver = Arc::clone(&store);
@@ -207,7 +212,7 @@ pub async fn run_agent_loop(
             };
             state.add_turn(assistant_turn.clone());
             {
-                let s = store.lock().unwrap();
+                let s = store.lock().await;
                 s.add_turn(&agent_id, &assistant_turn)?;
                 s.save_state(&state)?;
             }
@@ -238,7 +243,7 @@ pub async fn run_agent_loop(
     };
     state.add_turn(assistant_turn.clone());
     {
-        let s = store.lock().unwrap();
+        let s = store.lock().await;
         s.add_turn(&agent_id, &assistant_turn)?;
         s.save_state(&state)?;
     }

@@ -475,6 +475,17 @@ impl Store {
         Ok(deleted as u32)
     }
 
+    /// Delete conversation turns older than `max_age_days` days.
+    /// `timestamp` is stored as Unix epoch seconds (string), so we cast to integer for comparison.
+    pub fn cleanup_old_turns(&self, max_age_days: i64) -> Result<usize> {
+        let cutoff = max_age_days * 86400;
+        let deleted = self.conn.execute(
+            "DELETE FROM conversations WHERE CAST(timestamp AS INTEGER) < (strftime('%s', 'now') - ?1)",
+            params![cutoff],
+        )?;
+        Ok(deleted)
+    }
+
     /// Full-text search across execution history
     pub fn search_executions(&self, query: &str, limit: usize) -> Result<Vec<ExecutionRecord>> {
         // Sanitize: keep only alphanumeric, spaces, Korean (Hangul), and basic punctuation.

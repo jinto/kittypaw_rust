@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use kittypaw_core::capability::CapabilityChecker;
 use kittypaw_core::error::{KittypawError, Result};
@@ -37,7 +38,7 @@ pub async fn resolve_skill_call(
     call: &SkillCall,
     config: &kittypaw_core::config::Config,
     store: &Arc<Mutex<Store>>,
-    checker: Option<&Arc<Mutex<CapabilityChecker>>>,
+    checker: Option<&Arc<std::sync::Mutex<CapabilityChecker>>>,
 ) -> String {
     if let Some(cap) = checker {
         match cap.lock() {
@@ -84,9 +85,9 @@ pub async fn resolve_skill_call(
         };
     }
 
-    // Storage calls need synchronous Store access
+    // Storage calls need Store access
     if call.skill_name == "Storage" {
-        let s = store.lock().unwrap();
+        let s = store.lock().await;
         return match execute_storage(call, &s, None) {
             Ok(val) => serde_json::to_string(&val).unwrap_or_else(|_| "null".to_string()),
             Err(e) => serde_json::to_string(&serde_json::json!({"error": e.to_string()}))

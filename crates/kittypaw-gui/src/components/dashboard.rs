@@ -127,7 +127,8 @@ pub fn Dashboard() -> Element {
     let packages_dir = app_state.packages_dir.clone();
     let store_arc = app_state.store.clone();
     use_effect(move || {
-        if let Ok(store) = store_arc.lock() {
+        {
+            let store = store_arc.blocking_lock();
             if let Ok(s) = store.today_stats() {
                 stats.set(s);
             }
@@ -276,7 +277,8 @@ pub fn Dashboard() -> Element {
                                 button {
                                     style: "background: #F59E0B; border: none; border-radius: 6px; padding: 4px 10px; font-size: 12px; color: #FFFFFF; cursor: pointer; margin-right: 6px;",
                                     onclick: move |_| {
-                                        if let Ok(store) = app_state_accept.store.lock() {
+                                        {
+                                            let store = app_state_accept.store.blocking_lock();
                                             let accept_key = format!("schedule_accepted:{}", skill_id_accept);
                                             let _ = store.set_user_context(&accept_key, "true", "user");
                                         }
@@ -288,7 +290,8 @@ pub fn Dashboard() -> Element {
                                     style: "background: transparent; border: 1px solid #D97706; border-radius: 6px; padding: 4px 10px; font-size: 12px; color: #92400E; cursor: pointer;",
                                     onclick: move |_| {
                                         let dismiss_key = format!("suggest_dismissed:{}", skill_id_dismiss);
-                                        if let Ok(store) = app_state_dismiss.store.lock() {
+                                        {
+                                            let store = app_state_dismiss.store.blocking_lock();
                                             let _ = store.set_user_context(&dismiss_key, "1", "user");
                                         }
                                         let id_to_remove = skill_id_dismiss.clone();

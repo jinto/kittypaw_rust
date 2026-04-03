@@ -1,5 +1,6 @@
 use std::io::Read;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use clap::{Parser, Subcommand};
 use kittypaw_core::config::{ChannelType, Config, ModelConfig};
@@ -201,6 +202,56 @@ async fn main() {
     }
 }
 
+/// Routes a response message to the correct channel based on EventType.
+struct ResponseRouter<'a> {
+    ws_channel: &'a kittypaw_channels::websocket::ServeWebSocketChannel,
+    config: &'a kittypaw_core::config::Config,
+}
+
+impl<'a> ResponseRouter<'a> {
+    async fn send_response(
+        &self,
+        event_type: &kittypaw_core::types::EventType,
+        session_id: &str,
+        text: &str,
+    ) {
+        use kittypaw_core::types::EventType;
+        match event_type {
+            EventType::WebChat => {
+                if let Err(e) = self.ws_channel.send_to_session(session_id, text).await {
+                    tracing::warn!("Failed to send WebSocket response: {e}");
+                }
+            }
+            EventType::Telegram => {
+                send_telegram_message(self.config, session_id, text).await;
+            }
+            EventType::Desktop => {
+                tracing::info!("Desktop response for {session_id}: {text}");
+            }
+        }
+    }
+
+    async fn send_error(
+        &self,
+        event_type: &kittypaw_core::types::EventType,
+        session_id: &str,
+        text: &str,
+    ) {
+        use kittypaw_core::types::EventType;
+        match event_type {
+            EventType::WebChat => {
+                let _ = self.ws_channel.send_to_session(session_id, text).await;
+            }
+            EventType::Telegram => {
+                send_telegram_message(self.config, session_id, text).await;
+            }
+            EventType::Desktop => {
+                tracing::error!("Desktop error for {session_id}: {text}");
+            }
+        }
+    }
+}
+
 async fn run_serve(bind_addr: &str) {
     use kittypaw_channels::channel::Channel;
     use kittypaw_channels::slack::SlackChannel;
@@ -337,6 +388,7 @@ async fn run_serve(bind_addr: &str) {
                         .to_string(),
                 };
                 let event_type = event.event_type.clone();
+                let router = ResponseRouter { ws_channel: &ws_channel, config: &config };
 
                 // Check for /teach command on Telegram
                 let is_teach = event.event_type == EventType::Telegram
@@ -419,7 +471,7 @@ async fn run_serve(bind_addr: &str) {
                     match sandbox.execute(&wrapped_code, context).await {
                         Ok(exec_result) => {
                             if !exec_result.skill_calls.is_empty() {
-                                let preresolved = crate::skill_executor::resolve_storage_calls(&exec_result.skill_calls, &store.lock().unwrap(), Some(&skill.name));
+                                let preresolved = crate::skill_executor::resolve_storage_calls(&exec_result.skill_calls, &*store.lock().await, Some(&skill.name));
                                 let mut checker = kittypaw_core::capability::CapabilityChecker::from_skill_permissions(&skill.permissions);
                                 let _ = crate::skill_executor::execute_skill_calls(&exec_result.skill_calls, &config, preresolved, Some(&skill.name), Some(&mut checker), None).await;
                             }
@@ -428,33 +480,11 @@ async fn run_serve(bind_addr: &str) {
                             } else {
                                 exec_result.output.clone()
                             };
-                            match event_type {
-                                EventType::WebChat => {
-                                    if let Err(e) = ws_channel.send_to_session(&session_id, &output).await {
-                                        tracing::warn!("Failed to send WebSocket response: {e}");
-                                    }
-                                }
-                                EventType::Telegram => {
-                                    send_telegram_message(&config, &session_id, &output).await;
-                                }
-                                EventType::Desktop => {
-                                    tracing::info!("Desktop skill output for {session_id}: {output}");
-                                }
-                            }
+                            router.send_response(&event_type, &session_id, &output).await;
                         }
                         Err(e) => {
                             tracing::error!("Skill execution error for session {session_id}: {e}");
-                            match event_type {
-                                EventType::WebChat => {
-                                    let _ = ws_channel.send_to_session(&session_id, &format!("Error: {e}")).await;
-                                }
-                                EventType::Telegram => {
-                                    send_telegram_message(&config, &session_id, &format!("Skill error: {e}")).await;
-                                }
-                                EventType::Desktop => {
-                                    tracing::error!("Desktop skill error for {session_id}: {e}");
-                                }
-                            }
+                            router.send_error(&event_type, &session_id, &format!("Skill error: {e}")).await;
                         }
                     }
                     continue;
@@ -463,17 +493,7 @@ async fn run_serve(bind_addr: &str) {
                 // No skill matched — check freeform fallback
                 if !config.freeform_fallback {
                     let msg = "No matching skill found. Use /teach to create one.";
-                    match event_type {
-                        EventType::WebChat => {
-                            let _ = ws_channel.send_to_session(&session_id, msg).await;
-                        }
-                        EventType::Telegram => {
-                            send_telegram_message(&config, &session_id, msg).await;
-                        }
-                        EventType::Desktop => {
-                            tracing::info!("Desktop: {msg}");
-                        }
-                    }
+                    router.send_response(&event_type, &session_id, msg).await;
                     continue;
                 }
 
@@ -488,36 +508,11 @@ async fn run_serve(bind_addr: &str) {
                 };
                 match kittypaw_cli::assistant::run_assistant_turn(&assistant_ctx).await {
                     Ok(turn) => {
-                        let output = &turn.response_text;
-                        match event_type {
-                            EventType::WebChat => {
-                                if let Err(e) = ws_channel.send_to_session(&session_id, output).await {
-                                    tracing::warn!("Failed to send WebSocket response: {e}");
-                                }
-                            }
-                            EventType::Telegram => {
-                                send_telegram_message(&config, &session_id, output).await;
-                            }
-                            EventType::Desktop => {
-                                tracing::info!("Desktop assistant response for {session_id}: {output}");
-                            }
-                        }
+                        router.send_response(&event_type, &session_id, &turn.response_text).await;
                     }
                     Err(e) => {
                         tracing::error!("Assistant error for session {session_id}: {e}");
-                        match event_type {
-                            EventType::WebChat => {
-                                let _ = ws_channel
-                                    .send_to_session(&session_id, &format!("Error: {e}"))
-                                    .await;
-                            }
-                            EventType::Telegram => {
-                                send_telegram_message(&config, &session_id, &format!("Error: {e}")).await;
-                            }
-                            EventType::Desktop => {
-                                tracing::error!("Desktop assistant error for {session_id}: {e}");
-                            }
-                        }
+                        router.send_error(&event_type, &session_id, &format!("Error: {e}")).await;
                     }
                 }
             }
@@ -789,7 +784,7 @@ async fn run_skill_cli(name: &str, dry_run: bool) {
                         } else {
                             let preresolved = skill_executor::resolve_storage_calls(
                                 &result.skill_calls,
-                                &store.lock().unwrap(),
+                                &*store.lock().await,
                                 Some(&skill.name),
                             );
                             let mut checker = kittypaw_core::capability::CapabilityChecker::from_skill_permissions(&skill.permissions);

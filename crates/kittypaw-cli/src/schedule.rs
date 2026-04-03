@@ -401,6 +401,7 @@ pub async fn run_schedule_loop(
         };
         let notifier = NotificationSender::new(config);
         let _ = store.cleanup_old_executions(30);
+        let _ = store.cleanup_old_turns(30);
         // Clean up execution.jsonl — delete if larger than 10MB
         {
             let log_path = data_dir.join("execution.jsonl");

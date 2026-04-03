@@ -255,7 +255,8 @@ fn StepComplete(on_complete: EventHandler) -> Element {
                 button {
                     style: "padding: 14px 40px; background: #86EFAC; color: #166534; border: none; border-radius: 6px; font-size: 15px; font-weight: 600; cursor: pointer;",
                     onclick: move |_| {
-                        if let Ok(store) = app_state.store.lock() {
+                        {
+                            let store = app_state.store.blocking_lock();
                             let _ = store.set_user_context("onboarding_completed", "true", "system");
                         }
                         on_complete.call(());

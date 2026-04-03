@@ -13,15 +13,14 @@ pub fn App() -> Element {
     {
         let app_state = app_state.clone();
         use_effect(move || {
-            if let Ok(store) = app_state.store.lock() {
-                if store
-                    .get_user_context("onboarding_completed")
-                    .ok()
-                    .flatten()
-                    .is_some()
-                {
-                    onboarding_done.set(true);
-                }
+            let store = app_state.store.blocking_lock();
+            if store
+                .get_user_context("onboarding_completed")
+                .ok()
+                .flatten()
+                .is_some()
+            {
+                onboarding_done.set(true);
             }
         });
     }

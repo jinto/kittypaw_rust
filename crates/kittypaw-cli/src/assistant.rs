@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use kittypaw_core::config::Config;
 use kittypaw_core::error::Result;
@@ -120,7 +121,7 @@ pub async fn run_assistant_turn(ctx: &AssistantContext<'_>) -> Result<AssistantT
 
     // Load or create agent state — ensure agent exists in DB before adding turns
     let mut state = {
-        let s = ctx.store.lock().unwrap();
+        let s = ctx.store.lock().await;
         match s.load_state(&agent_id)? {
             Some(existing) => existing,
             None => {
@@ -133,7 +134,7 @@ pub async fn run_assistant_turn(ctx: &AssistantContext<'_>) -> Result<AssistantT
 
     // Load user context for personalization
     let user_context = {
-        let s = ctx.store.lock().unwrap();
+        let s = ctx.store.lock().await;
         s.list_shared_context().unwrap_or_default()
     };
 
@@ -151,7 +152,7 @@ pub async fn run_assistant_turn(ctx: &AssistantContext<'_>) -> Result<AssistantT
     };
     state.add_turn(user_turn.clone());
     {
-        let s = ctx.store.lock().unwrap();
+        let s = ctx.store.lock().await;
         s.add_turn(&agent_id, &user_turn)?;
     }
 
@@ -256,7 +257,7 @@ pub async fn run_assistant_turn(ctx: &AssistantContext<'_>) -> Result<AssistantT
                 actions_taken.push(action.clone());
             }
             AssistantAction::SavePreference { key, value } => {
-                let s = ctx.store.lock().unwrap();
+                let s = ctx.store.lock().await;
                 let _ = s.set_user_context(key, value, "assistant");
                 actions_taken.push(action.clone());
             }
@@ -292,7 +293,7 @@ pub async fn run_assistant_turn(ctx: &AssistantContext<'_>) -> Result<AssistantT
     };
     state.add_turn(assistant_turn.clone());
     {
-        let s = ctx.store.lock().unwrap();
+        let s = ctx.store.lock().await;
         s.add_turn(&agent_id, &assistant_turn)?;
         s.save_state(&state)?;
     }

@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::state::AppState;
 use dioxus::prelude::*;
@@ -214,7 +214,7 @@ async fn run_skill_test(
     pkg_id: String,
     packages_dir: std::path::PathBuf,
     config: HashMap<String, String>,
-    store: Arc<Mutex<kittypaw_store::Store>>,
+    store: Arc<tokio::sync::Mutex<kittypaw_store::Store>>,
 ) -> String {
     let js_path = packages_dir.join(&pkg_id).join("main.js");
     let js_code = match std::fs::read_to_string(&js_path) {
