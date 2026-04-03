@@ -144,7 +144,7 @@ impl Config {
             config.llm.model = model;
         }
 
-        // Layer 3: Fall back to OS keychain if api_key is still empty
+        // Layer 3: Fall back to the local secret store if api_key is still empty
         if config.llm.api_key.is_empty() {
             if let Ok(Some(key)) = crate::secrets::get_secret("settings", "api_key") {
                 config.llm.api_key = key;

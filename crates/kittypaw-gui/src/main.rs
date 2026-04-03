@@ -13,9 +13,8 @@ use kittypaw_store::Store;
 use state::AppState;
 
 fn main() {
-    let data_dir = dirs_next::home_dir()
-        .map(|p| p.join(".kittypaw"))
-        .unwrap_or_else(|| std::path::PathBuf::from(".kittypaw"));
+    let data_dir = kittypaw_core::secrets::data_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from(".kittypaw"));
 
     let db_path = data_dir.join("kittypaw.db");
     if let Some(parent) = db_path.parent() {
@@ -43,7 +42,7 @@ fn main() {
         );
     }
 
-    // If no env var, try keychain
+    // If no env var, try the local secret store
     if persisted_key.is_empty() {
         if let Ok(Some(key)) = kittypaw_core::secrets::get_secret("settings", "api_key") {
             if !key.is_empty() {
@@ -77,7 +76,7 @@ fn main() {
             llm_registry.set_default("local");
         }
     } else {
-        // If no env vars, try keychain
+        // If no env vars, try the local secret store
         if let (Ok(Some(url)), Ok(Some(model))) = (
             kittypaw_core::secrets::get_secret("local_model", "base_url"),
             kittypaw_core::secrets::get_secret("local_model", "model_name"),

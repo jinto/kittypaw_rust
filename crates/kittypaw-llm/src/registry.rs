@@ -50,7 +50,7 @@ impl LlmRegistry {
     }
 
     /// Build a registry from model configs.
-    /// If api_key is empty in config, tries keychain via kittypaw_core::secrets.
+    /// If api_key is empty in config, tries the local secret store via kittypaw_core::secrets.
     /// Models without a resolvable API key are skipped.
     pub fn from_configs(configs: &[ModelConfig]) -> Self {
         let mut registry = Self::new();

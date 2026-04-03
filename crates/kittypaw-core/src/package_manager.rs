@@ -127,7 +127,7 @@ impl PackageManager {
     }
 
     /// Get config values for a package.
-    /// Secret values stored as `<keychain>` are resolved from the OS keychain.
+    /// Secret values stored as `<secret>` are resolved from the local secret store.
     pub fn get_config(&self, id: &str) -> Result<HashMap<String, String>> {
         let config_path = self.packages_dir.join(id).join("config.toml");
         if !config_path.exists() {
@@ -139,7 +139,8 @@ impl PackageManager {
         let mut map = HashMap::new();
         for (k, v) in table {
             if let toml::Value::String(s) = v {
-                if s == "<keychain>" {
+                if s == crate::secrets::SECRET_MARKER || s == crate::secrets::LEGACY_KEYCHAIN_MARKER
+                {
                     if let Some(secret) = crate::secrets::get_secret(&format!("packages/{id}"), &k)?
                     {
                         map.insert(k, secret);
@@ -169,7 +170,7 @@ impl PackageManager {
             toml::Table::new()
         };
 
-        // Secret fields are stored in the OS keychain
+        // Secret fields are stored in the local secret store
         let pkg = self.load_package(id)?;
         let is_secret = pkg.config_schema.iter().any(|f| {
             f.key == key && matches!(f.field_type, crate::package::ConfigFieldType::Secret)
@@ -179,7 +180,7 @@ impl PackageManager {
             crate::secrets::set_secret(&format!("packages/{id}"), key, value)?;
             table.insert(
                 key.to_string(),
-                toml::Value::String("<keychain>".to_string()),
+                toml::Value::String(crate::secrets::SECRET_MARKER.to_string()),
             );
         } else {
             table.insert(key.to_string(), toml::Value::String(value.to_string()));
@@ -272,6 +273,7 @@ impl PackageManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
     use tempfile::TempDir;
 
     const SAMPLE_TOML: &str = r#"
@@ -312,6 +314,31 @@ default = "us-east-1"
         .unwrap();
 
         (packages_tmp, mgr, source_tmp)
+    }
+
+    fn secrets_test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct KittypawHomeGuard(Option<std::ffi::OsString>);
+
+    impl KittypawHomeGuard {
+        fn set(path: &Path) -> Self {
+            let previous = std::env::var_os("KITTYPAW_HOME");
+            std::env::set_var("KITTYPAW_HOME", path);
+            Self(previous)
+        }
+    }
+
+    impl Drop for KittypawHomeGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.0 {
+                std::env::set_var("KITTYPAW_HOME", previous);
+            } else {
+                std::env::remove_var("KITTYPAW_HOME");
+            }
+        }
     }
 
     #[test]
@@ -370,20 +397,23 @@ default = "us-east-1"
     }
 
     #[test]
-    #[ignore = "requires OS keychain access, may prompt for permission"]
     fn test_set_secret_config() {
+        let _guard = secrets_test_lock().lock().unwrap();
         let (_packages_tmp, mgr, source_tmp) = setup();
+        let secrets_tmp = TempDir::new().unwrap();
+        let _home_guard = KittypawHomeGuard::set(secrets_tmp.path());
         mgr.install_package(source_tmp.path()).unwrap();
 
-        // Set a secret value — stored in keychain, config.toml gets `<keychain>` marker
+        // Set a secret value — stored in the secret store, config.toml gets `<secret>` marker
         mgr.set_config("test-pkg", "api_key", "sk-123").unwrap();
         let raw_config =
             std::fs::read_to_string(mgr.packages_dir.join("test-pkg").join("config.toml")).unwrap();
         assert!(
-            raw_config.contains("<keychain>"),
-            "Secret field should store <keychain> marker in config.toml"
+            raw_config.contains(crate::secrets::SECRET_MARKER),
+            "Secret field should store {marker} marker in config.toml",
+            marker = crate::secrets::SECRET_MARKER,
         );
-        // get_config resolves from keychain
+        // get_config resolves from the secret store
         let config = mgr.get_config("test-pkg").unwrap();
         assert_eq!(config.get("api_key").unwrap(), "sk-123");
     }

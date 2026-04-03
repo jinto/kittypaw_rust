@@ -132,7 +132,7 @@ cargo run -p kittypaw-cli -- serve
 | GUI | [Dioxus](https://dioxuslabs.com/) 0.6 (데스크톱) |
 | 샌드박스 | QuickJS VM + macOS Seatbelt / Linux Landlock |
 | LLM | Claude API + OpenAI API + 로컬 LLM (Ollama/LM Studio/llama.cpp) |
-| 저장소 | SQLite (rusqlite) + OS Keychain (시크릿) |
+| 저장소 | SQLite (rusqlite) + 로컬 시크릿 저장소 |
 | 패키지 | TOML 기반 스킬 패키지 (`package.toml` + `main.js`) |
 
 ### 샌드박스 프리미티브
@@ -174,6 +174,7 @@ package = "send-telegram"
 ```
 ~/.kittypaw/
 ├── kittypaw.db          # 대화 기록, 에이전트 상태 (SQLite)
+├── secrets.json         # API 키, 채널 토큰 등 시크릿
 ├── packages/            # 설치된 스킬 패키지
 │   ├── macro-economy-report/
 │   │   ├── package.toml
@@ -184,7 +185,7 @@ package = "send-telegram"
 └── skills/              # teach로 만든 스킬 (레거시)
 ```
 
-API 키와 시크릿은 OS Keychain에 저장됩니다 (macOS Keychain / Windows Credential Manager).
+API 키와 시크릿은 `~/.kittypaw/secrets.json`에 저장됩니다.
 
 ---
 

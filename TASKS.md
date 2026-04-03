@@ -156,6 +156,13 @@
 - [ ] 스킬이 커스텀 UI를 그리거나 도구를 등록할 수 있는 확장 레이어
 - [ ] agentskills.io 호환 검토 (Pi/Claude Code/Codex CLI 공용 스킬 포맷)
 
+### Agent Runtime Hardening (Claude Code 분석 참고)
+- [ ] `agent_loop.rs` 상태 전이 명시화 (`generate` → `execute` → `retry` → `finish`) + transition reason 로그
+- [ ] 단계별 컨텍스트 압축: 최근 턴 유지 + tool/output 축약 + 오래된 대화 요약
+- [ ] sandbox file/network permission popup wiring 완료 (`AskUser`, `AllowOnce`, `AllowPermanent`)
+- [ ] 기능 플래그 / kill switch 레이어 (background agents, model routing, experimental channels)
+- [ ] 실패 복구 정책 고도화: token budget 초과 시 compact 후 재시도, 프롬프트 축소, 경량 모델 fallback
+
 ### 기타 백로그
 - [ ] 웹 검색 프로바이더 폴백 체인 (Exa → DuckDuckGo)
 - [ ] 스킬 체이닝 병렬 실행 (`parallel()`)
