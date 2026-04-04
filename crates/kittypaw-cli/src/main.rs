@@ -118,6 +118,16 @@ enum Commands {
     Init,
     /// Interactive chat with KittyPaw assistant
     Chat,
+    /// Show today's execution stats
+    Status,
+    /// Show recent execution log
+    Log {
+        /// Filter by skill name
+        skill: Option<String>,
+        /// Number of entries to show
+        #[arg(short, long, default_value = "10")]
+        limit: usize,
+    },
 }
 
 #[derive(Subcommand)]
@@ -211,6 +221,12 @@ async fn main() {
         }
         Some(Commands::Chat) => {
             run_chat().await;
+        }
+        Some(Commands::Status) => {
+            run_status().await;
+        }
+        Some(Commands::Log { skill, limit }) => {
+            run_log(skill, limit).await;
         }
         None => {
             run_stdin().await;
@@ -1208,6 +1224,124 @@ async fn run_chat() {
             Err(e) => eprintln!("Error: {e}\n"),
         }
     }
+}
+
+async fn run_status() {
+    let config = Config::load().unwrap_or_default();
+    let db_path = std::env::var("KITTYPAW_DB_PATH").unwrap_or_else(|_| "kittypaw.db".into());
+    let store = match Store::open(&db_path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Database error: {e}");
+            return;
+        }
+    };
+
+    match store.today_stats() {
+        Ok(stats) => {
+            println!("=== KittyPaw Status ===");
+            println!(
+                "Today: {} runs ({} ok, {} failed), {} retries, {} tokens",
+                stats.total_runs,
+                stats.successful,
+                stats.failed,
+                stats.auto_retries,
+                stats.total_tokens
+            );
+        }
+        Err(e) => eprintln!("Error loading stats: {e}"),
+    }
+
+    match store.recent_executions(5) {
+        Ok(records) => {
+            if records.is_empty() {
+                println!("\nNo recent executions.");
+            } else {
+                println!("\nRecent executions:");
+                for r in &records {
+                    let status = if r.success { "ok" } else { "FAIL" };
+                    let tokens = parse_usage_tokens(&r.usage_json);
+                    println!(
+                        "  {} | {:<20} | {:>4} | {:>6}ms | {} tokens",
+                        &r.started_at[..19.min(r.started_at.len())],
+                        r.skill_name,
+                        status,
+                        r.duration_ms,
+                        tokens
+                    );
+                }
+            }
+        }
+        Err(e) => eprintln!("Error loading executions: {e}"),
+    }
+
+    // Show token budget if configured
+    if config.features.daily_token_limit > 0 {
+        if let Ok(stats) = store.today_stats() {
+            let pct = if config.features.daily_token_limit > 0 {
+                (stats.total_tokens as f64 / config.features.daily_token_limit as f64 * 100.0)
+                    as u64
+            } else {
+                0
+            };
+            println!(
+                "\nToken budget: {}/{} ({}%)",
+                stats.total_tokens, config.features.daily_token_limit, pct
+            );
+        }
+    }
+}
+
+async fn run_log(skill: Option<String>, limit: usize) {
+    let db_path = std::env::var("KITTYPAW_DB_PATH").unwrap_or_else(|_| "kittypaw.db".into());
+    let store = match Store::open(&db_path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Database error: {e}");
+            return;
+        }
+    };
+
+    let records = if let Some(ref name) = skill {
+        store.search_executions(name, limit).unwrap_or_default()
+    } else {
+        store.recent_executions(limit).unwrap_or_default()
+    };
+
+    if records.is_empty() {
+        println!("No executions found.");
+        return;
+    }
+
+    for r in &records {
+        let status = if r.success { "ok" } else { "FAIL" };
+        let tokens = parse_usage_tokens(&r.usage_json);
+        let summary = if r.result_summary.len() > 60 {
+            format!("{}...", &r.result_summary[..57])
+        } else {
+            r.result_summary.clone()
+        };
+        println!(
+            "{} | {:<20} | {:>4} | {:>6}ms | {:>6} tok | {}",
+            &r.started_at[..19.min(r.started_at.len())],
+            r.skill_name,
+            status,
+            r.duration_ms,
+            tokens,
+            summary
+        );
+    }
+}
+
+fn parse_usage_tokens(usage_json: &Option<String>) -> u64 {
+    let Some(json) = usage_json else { return 0 };
+    let Ok(entries) = serde_json::from_str::<Vec<serde_json::Value>>(json) else {
+        return 0;
+    };
+    entries
+        .iter()
+        .map(|e| e["input_tokens"].as_u64().unwrap_or(0) + e["output_tokens"].as_u64().unwrap_or(0))
+        .sum()
 }
 
 async fn run_stdin() {

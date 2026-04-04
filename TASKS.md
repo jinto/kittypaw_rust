@@ -180,6 +180,8 @@
 - [x] Fallback 모델 자동 전환: LlmRegistry::fallback_provider() (insertion order 보장) + transient 에러 소진 후 전환
 - [x] LLM 프로바이더 코드 정리: classify_reqwest_error + handle_response_status 공유 헬퍼 + AgentLoopParams 구조체
 - [x] LLM 토큰 사용량 추적: LlmResponse + TokenUsage 타입, Claude/OpenAI usage 파싱, usage_json DB 저장, 대시보드 표시
+- [x] CLI status/log 명령: `kittypaw status` (오늘 통계) + `kittypaw log` (실행 이력) + 토큰 예산 표시
+- [x] 일일 토큰 한도: `daily_token_limit` FeatureFlag + agent_loop 사전 체크
 
 ### 기타 백로그
 - [ ] 웹 검색 프로바이더 폴백 체인 (Exa → DuckDuckGo)

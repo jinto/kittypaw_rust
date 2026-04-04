@@ -112,7 +112,20 @@ pub async fn run_agent_loop(params: AgentLoopParams<'_>) -> Result<String> {
         s.add_turn(&agent_id, &user_turn)?;
     }
 
-    // Generate code with retry loop — each attempt uses progressively tighter compaction
+    // Check daily token budget before starting
+    if config.features.daily_token_limit > 0 {
+        let stats = store.lock().await.today_stats()?;
+        if stats.total_tokens >= config.features.daily_token_limit {
+            return Err(KittypawError::Llm {
+                kind: kittypaw_core::error::LlmErrorKind::Other,
+                message: format!(
+                    "Daily token limit reached ({}/{})",
+                    stats.total_tokens, config.features.daily_token_limit
+                ),
+            });
+        }
+    }
+
     let mut last_error: Option<String> = None;
     let mut active_provider: &dyn LlmProvider = provider;
     let mut fallback_used = false;

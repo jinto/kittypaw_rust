@@ -61,6 +61,9 @@ pub struct FeatureFlags {
     /// Background agent execution — experimental (default: disabled).
     #[serde(default)]
     pub background_agents: bool,
+    /// Daily token usage limit. 0 = unlimited.
+    #[serde(default)]
+    pub daily_token_limit: u64,
 }
 
 fn default_true() -> bool {
@@ -74,6 +77,7 @@ impl Default for FeatureFlags {
             context_compaction: true,
             model_routing: false,
             background_agents: false,
+            daily_token_limit: 0,
         }
     }
 }
