@@ -28,21 +28,12 @@ pub fn validate_cron(expr: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Check if a package is due to run based on its cron trigger.
-pub fn is_package_due(pkg: &SkillPackage, last_run: Option<DateTime<Utc>>) -> bool {
-    let trigger = match &pkg.trigger {
-        Some(t) if t.trigger_type == "schedule" => t,
-        _ => return false,
-    };
-    let cron_expr = match &trigger.cron {
-        Some(c) => c,
-        None => return false,
-    };
+/// Check whether a cron expression has fired since the last run.
+fn is_cron_due(cron_expr: &str, last_run: Option<DateTime<Utc>>) -> bool {
     let schedule = match CronSchedule::from_str(cron_expr) {
         Ok(s) => s,
         Err(_) => return false,
     };
-
     let reference = last_run.unwrap_or_else(|| Utc::now() - chrono::Duration::hours(24));
     schedule
         .after(&reference)
@@ -51,27 +42,27 @@ pub fn is_package_due(pkg: &SkillPackage, last_run: Option<DateTime<Utc>>) -> bo
         .is_some()
 }
 
+/// Check if a package is due to run based on its cron trigger.
+pub fn is_package_due(pkg: &SkillPackage, last_run: Option<DateTime<Utc>>) -> bool {
+    let trigger = match &pkg.trigger {
+        Some(t) if t.trigger_type == "schedule" => t,
+        _ => return false,
+    };
+    match &trigger.cron {
+        Some(c) => is_cron_due(c, last_run),
+        None => false,
+    }
+}
+
 /// Check if a skill is due to run based on its cron schedule.
 pub fn is_due(skill: &Skill, last_run: Option<DateTime<Utc>>) -> bool {
     if skill.trigger.trigger_type != "schedule" || !skill.enabled {
         return false;
     }
-    let cron_expr = match &skill.trigger.cron {
-        Some(c) => c,
-        None => return false,
-    };
-    let schedule = match CronSchedule::from_str(cron_expr) {
-        Ok(s) => s,
-        Err(_) => return false,
-    };
-
-    let reference = last_run.unwrap_or_else(|| Utc::now() - chrono::Duration::hours(24));
-    // If any scheduled time between last_run and now, it's due
-    schedule
-        .after(&reference)
-        .take_while(|t| *t <= Utc::now())
-        .next()
-        .is_some()
+    match &skill.trigger.cron {
+        Some(c) => is_cron_due(c, last_run),
+        None => false,
+    }
 }
 
 // --- Schedule persistence ---
@@ -379,6 +370,518 @@ fn handle_execution_failure(
     }
 }
 
+/// Notify retry and record a failed execution run (shared by skills and packages).
+fn handle_run_failure(
+    store: &kittypaw_store::Store,
+    notifier: &NotificationSender,
+    data_dir: &std::path::Path,
+    db_path: &str,
+    id: &str,
+    name: &str,
+    started_at: DateTime<Utc>,
+    error_msg: &str,
+    input_params: &str,
+    can_disable: bool,
+) {
+    let finished_at = Utc::now();
+    let duration_ms = (finished_at - started_at).num_milliseconds();
+    let failures = get_failure_count(db_path, id) + 1;
+    let delay_secs = 60u64 * (1u64 << failures.min(10));
+    notifier.notify_retry(id, failures, delay_secs);
+    handle_execution_failure(
+        store,
+        db_path,
+        id,
+        name,
+        started_at,
+        error_msg,
+        Some(input_params),
+        can_disable,
+    );
+    append_execution_log(data_dir, id, false, duration_ms, error_msg);
+}
+
+/// Record a successful execution and persist pattern-detected defaults.
+fn handle_run_success(
+    store: &kittypaw_store::Store,
+    notifier: &NotificationSender,
+    data_dir: &std::path::Path,
+    db_path: &str,
+    id: &str,
+    name: &str,
+    started_at: DateTime<Utc>,
+    output: &str,
+    input_params: &str,
+) {
+    let finished_at = Utc::now();
+    let duration_ms = (finished_at - started_at).num_milliseconds();
+    let _ = store.record_execution(
+        id,
+        name,
+        &started_at.to_rfc3339(),
+        &finished_at.to_rfc3339(),
+        duration_ms,
+        &output.chars().take(MAX_RESULT_LEN).collect::<String>(),
+        true,
+        0,
+        Some(input_params),
+        None,
+    );
+    set_last_run(db_path, id, Utc::now()).ok();
+    reset_failure_count(db_path, id).ok();
+
+    // Clear failure hint on success (self-improvement: retry succeeded)
+    let hint_key = format!("failure_hint:{}", id);
+    if store.get_user_context(&hint_key).ok().flatten().is_some() {
+        let _ = store.set_user_context(&hint_key, "", "cleared");
+        notifier.notify_recovery(id);
+    }
+
+    append_execution_log(data_dir, id, true, duration_ms, output);
+
+    // Detect param patterns and persist as defaults
+    if let Ok(patterns) = store.detect_param_patterns(id) {
+        if !patterns.is_empty() {
+            notifier.notify_patterns(id, &patterns);
+        }
+        for (key, value) in patterns {
+            let ctx_key = format!("default:{}:{}", id, key);
+            let _ = store.set_user_context(&ctx_key, &value, "pattern");
+        }
+    }
+}
+
+/// Execute a single scheduled skill and handle the result.
+async fn execute_scheduled_skill(
+    skill: &Skill,
+    js_code: &str,
+    config: &kittypaw_core::config::Config,
+    sandbox: &kittypaw_sandbox::sandbox::Sandbox,
+    notifier: &NotificationSender,
+    data_dir: &std::path::Path,
+    db_path: &str,
+) {
+    tracing::info!("Running scheduled skill: {}", skill.name);
+    let context = serde_json::json!({
+        "event_type": "schedule",
+        "event_text": "",
+        "chat_id": "",
+        "skill_name": skill.name,
+    });
+    let input_params = serde_json::to_string(&context).unwrap_or_default();
+    let input_params = input_params
+        .chars()
+        .take(MAX_RESULT_LEN)
+        .collect::<String>();
+    let wrapped = format!("const ctx = JSON.parse(__context__);\n{js_code}");
+    let started_at = Utc::now();
+    match sandbox.execute(&wrapped, context).await {
+        Ok(result) if result.success => {
+            // Open a fresh store after the await point (Store is !Sync)
+            let store = match kittypaw_store::Store::open(db_path) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!("Failed to open store for skill '{}': {e}", skill.name);
+                    return;
+                }
+            };
+            let call_error: Option<String> = if !result.skill_calls.is_empty() {
+                let preresolved = crate::skill_executor::resolve_storage_calls(
+                    &result.skill_calls,
+                    &store,
+                    Some(&skill.name),
+                );
+                let mut checker =
+                    kittypaw_core::capability::CapabilityChecker::from_skill_permissions(
+                        &skill.permissions,
+                    );
+                match crate::skill_executor::execute_skill_calls(
+                    &result.skill_calls,
+                    config,
+                    preresolved,
+                    Some(&skill.name),
+                    Some(&mut checker),
+                    None,
+                )
+                .await
+                {
+                    Ok(results) => results
+                        .iter()
+                        .find(|r| !r.success)
+                        .and_then(|r| r.error.clone()),
+                    Err(e) => Some(e.to_string()),
+                }
+            } else {
+                None
+            };
+            if let Some(ref err_msg) = call_error {
+                tracing::warn!(
+                    "Scheduled skill '{}' skill_call failed: {}",
+                    skill.name,
+                    err_msg
+                );
+                handle_run_failure(
+                    &store,
+                    notifier,
+                    data_dir,
+                    db_path,
+                    &skill.name,
+                    &skill.name,
+                    started_at,
+                    err_msg,
+                    &input_params,
+                    true,
+                );
+            } else {
+                tracing::info!(
+                    "Scheduled skill '{}' completed: {}",
+                    skill.name,
+                    result.output
+                );
+                handle_run_success(
+                    &store,
+                    notifier,
+                    data_dir,
+                    db_path,
+                    &skill.name,
+                    &skill.name,
+                    started_at,
+                    &result.output,
+                    &input_params,
+                );
+            }
+        }
+        Ok(result) => {
+            tracing::warn!(
+                "Scheduled skill '{}' failed: {:?}",
+                skill.name,
+                result.error
+            );
+            let error_msg = result.error.unwrap_or_default();
+            if let Ok(store) = kittypaw_store::Store::open(db_path) {
+                handle_run_failure(
+                    &store,
+                    notifier,
+                    data_dir,
+                    db_path,
+                    &skill.name,
+                    &skill.name,
+                    started_at,
+                    &error_msg,
+                    &input_params,
+                    true,
+                );
+            }
+        }
+        Err(e) => {
+            tracing::error!("Scheduled skill '{}' execution error: {e}", skill.name);
+            if let Ok(store) = kittypaw_store::Store::open(db_path) {
+                handle_run_failure(
+                    &store,
+                    notifier,
+                    data_dir,
+                    db_path,
+                    &skill.name,
+                    &skill.name,
+                    started_at,
+                    &e.to_string(),
+                    &input_params,
+                    true,
+                );
+            }
+        }
+    }
+}
+
+/// Execute chain steps sequentially, piping each output into the next.
+async fn execute_chain_steps(
+    pkg: &SkillPackage,
+    initial_output: &str,
+    pkg_mgr: &kittypaw_core::package_manager::PackageManager,
+    config: &kittypaw_core::config::Config,
+    sandbox: &kittypaw_sandbox::sandbox::Sandbox,
+    db_path: &str,
+    shared_ctx: &std::collections::HashMap<String, String>,
+) {
+    let chain_steps = match pkg_mgr.load_chain(pkg) {
+        Ok(steps) => steps,
+        Err(_) => return,
+    };
+    let mut prev_output = initial_output.to_string();
+    for (step_idx, (chain_pkg, chain_js)) in chain_steps.iter().enumerate() {
+        let chain_config = pkg_mgr
+            .get_config_with_defaults(&chain_pkg.meta.id)
+            .unwrap_or_default();
+        let chain_context = chain_pkg.build_context(
+            &chain_config,
+            serde_json::json!({}),
+            Some(&prev_output),
+            shared_ctx,
+        );
+        let chain_wrapped = format!("const ctx = JSON.parse(__context__);\n{chain_js}");
+        match sandbox.execute(&chain_wrapped, chain_context).await {
+            Ok(chain_result) if chain_result.success => {
+                // Execute captured skill calls (Telegram, Http, etc.)
+                if !chain_result.skill_calls.is_empty() {
+                    let store = match kittypaw_store::Store::open(db_path) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to open store for chain step '{}': {e}",
+                                chain_pkg.meta.id
+                            );
+                            break;
+                        }
+                    };
+                    let preresolved = crate::skill_executor::resolve_storage_calls(
+                        &chain_result.skill_calls,
+                        &store,
+                        Some(&chain_pkg.meta.id),
+                    );
+                    let mut checker =
+                        kittypaw_core::capability::CapabilityChecker::from_package_permissions(
+                            &chain_pkg.permissions,
+                        );
+                    // Use per-step model override from chain definition
+                    let chain_model = pkg
+                        .chain
+                        .get(step_idx)
+                        .and_then(|s| s.model.as_deref())
+                        .or(chain_pkg.model.as_deref());
+                    let _ = crate::skill_executor::execute_skill_calls(
+                        &chain_result.skill_calls,
+                        config,
+                        preresolved,
+                        Some(&chain_pkg.meta.id),
+                        Some(&mut checker),
+                        chain_model,
+                    )
+                    .await;
+                }
+                tracing::info!(
+                    "Chain step '{}' completed: {}",
+                    chain_pkg.meta.id,
+                    chain_result.output
+                );
+                prev_output = chain_result.output;
+            }
+            Ok(chain_result) => {
+                tracing::warn!(
+                    "Chain step '{}' failed: {:?}",
+                    chain_pkg.meta.id,
+                    chain_result.error
+                );
+                break;
+            }
+            Err(e) => {
+                tracing::error!("Chain step '{}' execution error: {e}", chain_pkg.meta.id);
+                break;
+            }
+        }
+    }
+}
+
+/// Collect pattern-detected defaults and build config for a package.
+fn prepare_package_context(
+    pkg: &SkillPackage,
+    store: &kittypaw_store::Store,
+    pkg_mgr: &kittypaw_core::package_manager::PackageManager,
+    shared_ctx: &std::collections::HashMap<String, String>,
+) -> (
+    serde_json::Value,
+    std::collections::HashMap<String, String>,
+    String,
+) {
+    let pattern_defaults: std::collections::HashMap<String, String> = {
+        let prefix = format!("default:{}:", pkg.meta.id);
+        let mut map = std::collections::HashMap::new();
+        if let Ok(ctx_keys) = store.list_user_context_prefix(&prefix) {
+            for (full_key, value) in ctx_keys {
+                let config_key = full_key[prefix.len()..].to_string();
+                map.insert(config_key, value);
+            }
+        }
+        map
+    };
+    let config_values = pkg_mgr
+        .get_config_with_defaults_and_patterns(&pkg.meta.id, &pattern_defaults)
+        .unwrap_or_default();
+    let event_payload = serde_json::json!({
+        "event_type": "schedule",
+    });
+    let context = pkg.build_context(&config_values, event_payload, None, shared_ctx);
+    // Filter out secret fields before recording to execution history
+    let mut safe_config = config_values.clone();
+    safe_config.retain(|k, _| {
+        !k.contains("token")
+            && !k.contains("secret")
+            && !k.contains("api_key")
+            && !k.starts_with("sk-")
+    });
+    let input_params = serde_json::to_string(&safe_config).unwrap_or_default();
+    let input_params = input_params
+        .chars()
+        .take(MAX_RESULT_LEN)
+        .collect::<String>();
+    (context, config_values, input_params)
+}
+
+/// Execute a single scheduled package and handle the result.
+#[allow(clippy::too_many_arguments)]
+async fn execute_scheduled_package(
+    pkg: &SkillPackage,
+    js_code: &str,
+    config: &kittypaw_core::config::Config,
+    sandbox: &kittypaw_sandbox::sandbox::Sandbox,
+    notifier: &NotificationSender,
+    data_dir: &std::path::Path,
+    db_path: &str,
+    pkg_mgr: &kittypaw_core::package_manager::PackageManager,
+    shared_ctx: &std::collections::HashMap<String, String>,
+    context: serde_json::Value,
+    config_values: &std::collections::HashMap<String, String>,
+    input_params: &str,
+) {
+    let wrapped = format!("const ctx = JSON.parse(__context__);\n{js_code}");
+    let started_at = Utc::now();
+    match sandbox.execute(&wrapped, context).await {
+        Ok(result) if result.success => {
+            // Open a fresh store after the await point (Store is !Sync)
+            let store = match kittypaw_store::Store::open(db_path) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!("Failed to open store for package '{}': {e}", pkg.meta.id);
+                    return;
+                }
+            };
+            let call_error: Option<String> = if !result.skill_calls.is_empty() {
+                let preresolved = crate::skill_executor::resolve_storage_calls(
+                    &result.skill_calls,
+                    &store,
+                    Some(&pkg.meta.id),
+                );
+                let mut checker =
+                    kittypaw_core::capability::CapabilityChecker::from_package_permissions(
+                        &pkg.permissions,
+                    );
+                let pkg_model_override = pkg.model.as_deref().or_else(|| {
+                    config_values
+                        .get("_model")
+                        .map(String::as_str)
+                        .filter(|s| !s.is_empty())
+                });
+                match crate::skill_executor::execute_skill_calls(
+                    &result.skill_calls,
+                    config,
+                    preresolved,
+                    Some(&pkg.meta.id),
+                    Some(&mut checker),
+                    pkg_model_override,
+                )
+                .await
+                {
+                    Ok(results) => results
+                        .iter()
+                        .find(|r| !r.success)
+                        .and_then(|r| r.error.clone()),
+                    Err(e) => Some(e.to_string()),
+                }
+            } else {
+                None
+            };
+            if let Some(ref err_msg) = call_error {
+                tracing::warn!(
+                    "Scheduled package '{}' skill_call failed: {}",
+                    pkg.meta.id,
+                    err_msg
+                );
+                handle_run_failure(
+                    &store,
+                    notifier,
+                    data_dir,
+                    db_path,
+                    &pkg.meta.id,
+                    &pkg.meta.name,
+                    started_at,
+                    err_msg,
+                    input_params,
+                    false,
+                );
+            } else {
+                tracing::info!(
+                    "Scheduled package '{}' completed: {}",
+                    pkg.meta.id,
+                    result.output
+                );
+                handle_run_success(
+                    &store,
+                    notifier,
+                    data_dir,
+                    db_path,
+                    &pkg.meta.id,
+                    &pkg.meta.name,
+                    started_at,
+                    &result.output,
+                    input_params,
+                );
+
+                // Execute chain steps if present
+                if !pkg.chain.is_empty() {
+                    execute_chain_steps(
+                        pkg,
+                        &result.output,
+                        pkg_mgr,
+                        config,
+                        sandbox,
+                        db_path,
+                        shared_ctx,
+                    )
+                    .await;
+                }
+            }
+        }
+        Ok(result) => {
+            tracing::warn!(
+                "Scheduled package '{}' failed: {:?}",
+                pkg.meta.id,
+                result.error
+            );
+            let error_msg = result.error.unwrap_or_default();
+            if let Ok(store) = kittypaw_store::Store::open(db_path) {
+                handle_run_failure(
+                    &store,
+                    notifier,
+                    data_dir,
+                    db_path,
+                    &pkg.meta.id,
+                    &pkg.meta.name,
+                    started_at,
+                    &error_msg,
+                    input_params,
+                    false,
+                );
+            }
+        }
+        Err(e) => {
+            tracing::error!("Scheduled package '{}' execution error: {e}", pkg.meta.id);
+            if let Ok(store) = kittypaw_store::Store::open(db_path) {
+                handle_run_failure(
+                    &store,
+                    notifier,
+                    data_dir,
+                    db_path,
+                    &pkg.meta.id,
+                    &pkg.meta.name,
+                    started_at,
+                    &e.to_string(),
+                    input_params,
+                    false,
+                );
+            }
+        }
+    }
+}
+
 pub async fn run_schedule_loop(
     config: &kittypaw_core::config::Config,
     sandbox: &kittypaw_sandbox::sandbox::Sandbox,
@@ -392,27 +895,60 @@ pub async fn run_schedule_loop(
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
     loop {
         interval.tick().await;
-        let store = match kittypaw_store::Store::open(db_path) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!("Failed to open store for schedule loop: {e}");
-                continue;
-            }
-        };
-        let notifier = NotificationSender::new(config);
-        let _ = store.cleanup_old_executions(30);
-        let _ = store.cleanup_old_turns(30);
-        // Clean up execution.jsonl — delete if larger than 10MB
-        {
-            let log_path = data_dir.join("execution.jsonl");
-            if log_path.exists() {
-                if let Ok(metadata) = std::fs::metadata(&log_path) {
-                    if metadata.len() > 10_000_000 {
-                        let _ = std::fs::remove_file(&log_path);
+
+        // Housekeeping — open store briefly for cleanup, then drop before await.
+        let (shared_ctx, pkg_contexts) = {
+            let store = match kittypaw_store::Store::open(db_path) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!("Failed to open store for schedule loop: {e}");
+                    continue;
+                }
+            };
+            let _ = store.cleanup_old_executions(30);
+            let _ = store.cleanup_old_turns(30);
+            // Clean up execution.jsonl — delete if larger than 10MB
+            {
+                let log_path = data_dir.join("execution.jsonl");
+                if log_path.exists() {
+                    if let Ok(metadata) = std::fs::metadata(&log_path) {
+                        if metadata.len() > 10_000_000 {
+                            let _ = std::fs::remove_file(&log_path);
+                        }
                     }
                 }
             }
-        }
+
+            // Pre-compute package contexts while we have the store
+            let packages_dir = std::path::PathBuf::from(".kittypaw/packages");
+            let shared_ctx = store.list_shared_context().unwrap_or_default();
+            let pkg_contexts: Vec<_> = if let Ok(packages) =
+                kittypaw_core::package_manager::load_all_packages(&packages_dir)
+            {
+                let pkg_mgr =
+                    kittypaw_core::package_manager::PackageManager::new(packages_dir.clone());
+                packages
+                    .into_iter()
+                    .filter(|(pkg, _)| {
+                        let last_run = get_last_run(db_path, &pkg.meta.id);
+                        is_package_due(pkg, last_run)
+                    })
+                    .map(|(pkg, js_code)| {
+                        let (context, config_values, input_params) =
+                            prepare_package_context(&pkg, &store, &pkg_mgr, &shared_ctx);
+                        (pkg, js_code, context, config_values, input_params)
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            (shared_ctx, pkg_contexts)
+        };
+        // store is now dropped — safe to await
+
+        let notifier = NotificationSender::new(config);
+
+        // --- Run scheduled skills ---
         if let Ok(skills) = kittypaw_core::skill::load_all_skills() {
             for (skill, js_code) in &skills {
                 if skill.trigger.trigger_type != "schedule" || !skill.enabled {
@@ -422,475 +958,34 @@ pub async fn run_schedule_loop(
                 if !is_due(skill, last_run) {
                     continue;
                 }
-
-                tracing::info!("Running scheduled skill: {}", skill.name);
-                let context = serde_json::json!({
-                    "event_type": "schedule",
-                    "event_text": "",
-                    "chat_id": "",
-                    "skill_name": skill.name,
-                });
-                let skill_input_params = serde_json::to_string(&context).unwrap_or_default();
-                let skill_input_params = skill_input_params
-                    .chars()
-                    .take(MAX_RESULT_LEN)
-                    .collect::<String>();
-                let wrapped = format!("const ctx = JSON.parse(__context__);\n{js_code}");
-                let skill_started_at = Utc::now();
-                match sandbox.execute(&wrapped, context).await {
-                    Ok(result) if result.success => {
-                        let skill_call_error: Option<String> = if !result.skill_calls.is_empty() {
-                            let preresolved = crate::skill_executor::resolve_storage_calls(
-                                &result.skill_calls,
-                                &store,
-                                Some(&skill.name),
-                            );
-                            let mut checker = kittypaw_core::capability::CapabilityChecker::from_skill_permissions(&skill.permissions);
-                            match crate::skill_executor::execute_skill_calls(
-                                &result.skill_calls,
-                                config,
-                                preresolved,
-                                Some(&skill.name),
-                                Some(&mut checker),
-                                None,
-                            )
-                            .await
-                            {
-                                Ok(results) => results
-                                    .iter()
-                                    .find(|r| !r.success)
-                                    .and_then(|r| r.error.clone()),
-                                Err(e) => Some(e.to_string()),
-                            }
-                        } else {
-                            None
-                        };
-                        if let Some(ref err_msg) = skill_call_error {
-                            tracing::warn!(
-                                "Scheduled skill '{}' skill_call failed: {}",
-                                skill.name,
-                                err_msg
-                            );
-                            let skill_finished_at = Utc::now();
-                            let duration_ms =
-                                (skill_finished_at - skill_started_at).num_milliseconds();
-                            let failures = get_failure_count(db_path, &skill.name) + 1;
-                            let delay_secs = 60u64 * (1u64 << failures.min(10));
-                            notifier.notify_retry(&skill.name, failures, delay_secs);
-                            handle_execution_failure(
-                                &store,
-                                db_path,
-                                &skill.name,
-                                &skill.name,
-                                skill_started_at,
-                                err_msg,
-                                Some(&skill_input_params),
-                                true,
-                            );
-                            append_execution_log(
-                                &data_dir,
-                                &skill.name,
-                                false,
-                                duration_ms,
-                                err_msg,
-                            );
-                        } else {
-                            tracing::info!(
-                                "Scheduled skill '{}' completed: {}",
-                                skill.name,
-                                result.output
-                            );
-                            let skill_finished_at = Utc::now();
-                            let duration_ms =
-                                (skill_finished_at - skill_started_at).num_milliseconds();
-                            let _ = store.record_execution(
-                                &skill.name,
-                                &skill.name,
-                                &skill_started_at.to_rfc3339(),
-                                &skill_finished_at.to_rfc3339(),
-                                duration_ms,
-                                &result
-                                    .output
-                                    .chars()
-                                    .take(MAX_RESULT_LEN)
-                                    .collect::<String>(),
-                                true,
-                                0,
-                                Some(&skill_input_params),
-                                None, // usage_json — TODO: aggregate from skill calls
-                            );
-                            set_last_run(db_path, &skill.name, Utc::now()).ok();
-                            reset_failure_count(db_path, &skill.name).ok();
-
-                            // Clear failure hint on success (self-improvement: retry succeeded)
-                            let hint_key = format!("failure_hint:{}", skill.name);
-                            if store.get_user_context(&hint_key).ok().flatten().is_some() {
-                                let _ = store.set_user_context(&hint_key, "", "cleared");
-                                notifier.notify_recovery(&skill.name);
-                            }
-
-                            append_execution_log(
-                                &data_dir,
-                                &skill.name,
-                                true,
-                                duration_ms,
-                                &result.output,
-                            );
-
-                            // Detect param patterns and persist as defaults
-                            if let Ok(patterns) = store.detect_param_patterns(&skill.name) {
-                                if !patterns.is_empty() {
-                                    notifier.notify_patterns(&skill.name, &patterns);
-                                }
-                                for (key, value) in patterns {
-                                    let ctx_key = format!("default:{}:{}", skill.name, key);
-                                    let _ = store.set_user_context(&ctx_key, &value, "pattern");
-                                }
-                            }
-                        } // end else (skill_call_error is None)
-                    }
-                    Ok(result) => {
-                        tracing::warn!(
-                            "Scheduled skill '{}' failed: {:?}",
-                            skill.name,
-                            result.error
-                        );
-                        let error_msg = result.error.unwrap_or_default();
-                        let skill_finished_at = chrono::Utc::now();
-                        let duration_ms = (skill_finished_at - skill_started_at).num_milliseconds();
-                        let failures = get_failure_count(db_path, &skill.name) + 1;
-                        let delay_secs = 60u64 * (1u64 << failures.min(10));
-                        notifier.notify_retry(&skill.name, failures, delay_secs);
-                        handle_execution_failure(
-                            &store,
-                            db_path,
-                            &skill.name,
-                            &skill.name,
-                            skill_started_at,
-                            &error_msg,
-                            Some(&skill_input_params),
-                            true,
-                        );
-                        append_execution_log(
-                            &data_dir,
-                            &skill.name,
-                            false,
-                            duration_ms,
-                            &error_msg,
-                        );
-                    }
-                    Err(e) => {
-                        tracing::error!("Scheduled skill '{}' execution error: {e}", skill.name);
-                        let skill_finished_at = chrono::Utc::now();
-                        let duration_ms = (skill_finished_at - skill_started_at).num_milliseconds();
-                        let err_str = e.to_string();
-                        let failures = get_failure_count(db_path, &skill.name) + 1;
-                        let delay_secs = 60u64 * (1u64 << failures.min(10));
-                        notifier.notify_retry(&skill.name, failures, delay_secs);
-                        handle_execution_failure(
-                            &store,
-                            db_path,
-                            &skill.name,
-                            &skill.name,
-                            skill_started_at,
-                            &err_str,
-                            Some(&skill_input_params),
-                            true,
-                        );
-                        append_execution_log(&data_dir, &skill.name, false, duration_ms, &err_str);
-                    }
-                }
+                execute_scheduled_skill(
+                    skill, js_code, config, sandbox, &notifier, &data_dir, db_path,
+                )
+                .await;
             }
         }
 
         // --- Run scheduled packages ---
-        let packages_dir = std::path::PathBuf::from(".kittypaw/packages");
-        if let Ok(packages) = kittypaw_core::package_manager::load_all_packages(&packages_dir) {
-            let pkg_mgr = kittypaw_core::package_manager::PackageManager::new(packages_dir.clone());
-            let shared_ctx = store.list_shared_context().unwrap_or_default();
-            for (pkg, js_code) in &packages {
-                let last_run = get_last_run(db_path, &pkg.meta.id);
-                if !is_package_due(pkg, last_run) {
-                    continue;
-                }
-
+        if !pkg_contexts.is_empty() {
+            let packages_dir = std::path::PathBuf::from(".kittypaw/packages");
+            let pkg_mgr = kittypaw_core::package_manager::PackageManager::new(packages_dir);
+            for (pkg, js_code, context, config_values, input_params) in &pkg_contexts {
                 tracing::info!("Running scheduled package: {}", pkg.meta.id);
-                // Collect pattern-detected defaults from user_context
-                let pattern_defaults: std::collections::HashMap<String, String> = {
-                    let prefix = format!("default:{}:", pkg.meta.id);
-                    let mut map = std::collections::HashMap::new();
-                    // Read all user_context keys with this prefix via store
-                    if let Ok(ctx_keys) = store.list_user_context_prefix(&prefix) {
-                        for (full_key, value) in ctx_keys {
-                            let config_key = full_key[prefix.len()..].to_string();
-                            map.insert(config_key, value);
-                        }
-                    }
-                    map
-                };
-                let config_values = pkg_mgr
-                    .get_config_with_defaults_and_patterns(&pkg.meta.id, &pattern_defaults)
-                    .unwrap_or_default();
-                let event_payload = serde_json::json!({
-                    "event_type": "schedule",
-                });
-                let context = pkg.build_context(&config_values, event_payload, None, &shared_ctx);
-                // Filter out secret fields before recording to execution history
-                let mut safe_config = config_values.clone();
-                safe_config.retain(|k, _| {
-                    !k.contains("token")
-                        && !k.contains("secret")
-                        && !k.contains("api_key")
-                        && !k.starts_with("sk-")
-                });
-                let pkg_input_params = serde_json::to_string(&safe_config).unwrap_or_default();
-                let pkg_input_params = pkg_input_params
-                    .chars()
-                    .take(MAX_RESULT_LEN)
-                    .collect::<String>();
-                let wrapped = format!("const ctx = JSON.parse(__context__);\n{js_code}");
-                let pkg_started_at = Utc::now();
-                match sandbox.execute(&wrapped, context).await {
-                    Ok(result) if result.success => {
-                        let pkg_call_error: Option<String> = if !result.skill_calls.is_empty() {
-                            let preresolved = crate::skill_executor::resolve_storage_calls(
-                                &result.skill_calls,
-                                &store,
-                                Some(&pkg.meta.id),
-                            );
-                            let mut checker = kittypaw_core::capability::CapabilityChecker::from_package_permissions(&pkg.permissions);
-                            let pkg_model_override = pkg.model.as_deref().or_else(|| {
-                                config_values
-                                    .get("_model")
-                                    .map(String::as_str)
-                                    .filter(|s| !s.is_empty())
-                            });
-                            match crate::skill_executor::execute_skill_calls(
-                                &result.skill_calls,
-                                config,
-                                preresolved,
-                                Some(&pkg.meta.id),
-                                Some(&mut checker),
-                                pkg_model_override,
-                            )
-                            .await
-                            {
-                                Ok(results) => results
-                                    .iter()
-                                    .find(|r| !r.success)
-                                    .and_then(|r| r.error.clone()),
-                                Err(e) => Some(e.to_string()),
-                            }
-                        } else {
-                            None
-                        };
-                        if let Some(ref err_msg) = pkg_call_error {
-                            tracing::warn!(
-                                "Scheduled package '{}' skill_call failed: {}",
-                                pkg.meta.id,
-                                err_msg
-                            );
-                            let pkg_finished_at = Utc::now();
-                            let duration_ms = (pkg_finished_at - pkg_started_at).num_milliseconds();
-                            let failures = get_failure_count(db_path, &pkg.meta.id) + 1;
-                            let delay_secs = 60u64 * (1u64 << failures.min(10));
-                            notifier.notify_retry(&pkg.meta.id, failures, delay_secs);
-                            handle_execution_failure(
-                                &store,
-                                db_path,
-                                &pkg.meta.id,
-                                &pkg.meta.name,
-                                pkg_started_at,
-                                err_msg,
-                                Some(&pkg_input_params),
-                                false,
-                            );
-                            append_execution_log(
-                                &data_dir,
-                                &pkg.meta.id,
-                                false,
-                                duration_ms,
-                                err_msg,
-                            );
-                        } else {
-                            tracing::info!(
-                                "Scheduled package '{}' completed: {}",
-                                pkg.meta.id,
-                                result.output
-                            );
-                            let pkg_finished_at = Utc::now();
-                            let duration_ms = (pkg_finished_at - pkg_started_at).num_milliseconds();
-                            let _ = store.record_execution(
-                                &pkg.meta.id,
-                                &pkg.meta.name,
-                                &pkg_started_at.to_rfc3339(),
-                                &pkg_finished_at.to_rfc3339(),
-                                duration_ms,
-                                &result
-                                    .output
-                                    .chars()
-                                    .take(MAX_RESULT_LEN)
-                                    .collect::<String>(),
-                                true,
-                                0,
-                                Some(&pkg_input_params),
-                                None, // usage_json — TODO: aggregate from chain step calls
-                            );
-                            set_last_run(db_path, &pkg.meta.id, Utc::now()).ok();
-                            reset_failure_count(db_path, &pkg.meta.id).ok();
-
-                            // Clear failure hint on success (self-improvement: retry succeeded)
-                            let hint_key = format!("failure_hint:{}", pkg.meta.id);
-                            if store.get_user_context(&hint_key).ok().flatten().is_some() {
-                                let _ = store.set_user_context(&hint_key, "", "cleared");
-                                notifier.notify_recovery(&pkg.meta.id);
-                            }
-
-                            append_execution_log(
-                                &data_dir,
-                                &pkg.meta.id,
-                                true,
-                                duration_ms,
-                                &result.output,
-                            );
-
-                            // Detect param patterns and persist as defaults
-                            if let Ok(patterns) = store.detect_param_patterns(&pkg.meta.id) {
-                                if !patterns.is_empty() {
-                                    notifier.notify_patterns(&pkg.meta.id, &patterns);
-                                }
-                                for (key, value) in patterns {
-                                    let ctx_key = format!("default:{}:{}", pkg.meta.id, key);
-                                    let _ = store.set_user_context(&ctx_key, &value, "pattern");
-                                }
-                            }
-
-                            // Execute chain steps if present
-                            if !pkg.chain.is_empty() {
-                                if let Ok(chain_steps) = pkg_mgr.load_chain(pkg) {
-                                    let mut prev_output = result.output.clone();
-                                    for (step_idx, (chain_pkg, chain_js)) in
-                                        chain_steps.iter().enumerate()
-                                    {
-                                        let chain_config = pkg_mgr
-                                            .get_config_with_defaults(&chain_pkg.meta.id)
-                                            .unwrap_or_default();
-                                        let chain_context = chain_pkg.build_context(
-                                            &chain_config,
-                                            serde_json::json!({}),
-                                            Some(&prev_output),
-                                            &shared_ctx,
-                                        );
-                                        let chain_wrapped = format!(
-                                            "const ctx = JSON.parse(__context__);\n{chain_js}"
-                                        );
-                                        match sandbox.execute(&chain_wrapped, chain_context).await {
-                                            Ok(chain_result) if chain_result.success => {
-                                                // Execute captured skill calls (Telegram, Http, etc.)
-                                                if !chain_result.skill_calls.is_empty() {
-                                                    let preresolved =
-                                                    crate::skill_executor::resolve_storage_calls(
-                                                        &chain_result.skill_calls,
-                                                        &store,
-                                                        Some(&chain_pkg.meta.id),
-                                                    );
-                                                    let mut checker = kittypaw_core::capability::CapabilityChecker::from_package_permissions(&chain_pkg.permissions);
-                                                    // Use per-step model override from chain definition
-                                                    let chain_model = pkg
-                                                        .chain
-                                                        .get(step_idx)
-                                                        .and_then(|s| s.model.as_deref())
-                                                        .or(chain_pkg.model.as_deref());
-                                                    let _ =
-                                                        crate::skill_executor::execute_skill_calls(
-                                                            &chain_result.skill_calls,
-                                                            config,
-                                                            preresolved,
-                                                            Some(&chain_pkg.meta.id),
-                                                            Some(&mut checker),
-                                                            chain_model,
-                                                        )
-                                                        .await;
-                                                }
-                                                tracing::info!(
-                                                    "Chain step '{}' completed: {}",
-                                                    chain_pkg.meta.id,
-                                                    chain_result.output
-                                                );
-                                                prev_output = chain_result.output;
-                                            }
-                                            Ok(chain_result) => {
-                                                tracing::warn!(
-                                                    "Chain step '{}' failed: {:?}",
-                                                    chain_pkg.meta.id,
-                                                    chain_result.error
-                                                );
-                                                break;
-                                            }
-                                            Err(e) => {
-                                                tracing::error!(
-                                                    "Chain step '{}' execution error: {e}",
-                                                    chain_pkg.meta.id
-                                                );
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        } // end else (pkg_call_error is None)
-                    }
-                    Ok(result) => {
-                        tracing::warn!(
-                            "Scheduled package '{}' failed: {:?}",
-                            pkg.meta.id,
-                            result.error
-                        );
-                        let error_msg = result.error.unwrap_or_default();
-                        let pkg_finished_at = chrono::Utc::now();
-                        let duration_ms = (pkg_finished_at - pkg_started_at).num_milliseconds();
-                        let failures = get_failure_count(db_path, &pkg.meta.id) + 1;
-                        let delay_secs = 60u64 * (1u64 << failures.min(10));
-                        notifier.notify_retry(&pkg.meta.id, failures, delay_secs);
-                        handle_execution_failure(
-                            &store,
-                            db_path,
-                            &pkg.meta.id,
-                            &pkg.meta.name,
-                            pkg_started_at,
-                            &error_msg,
-                            Some(&pkg_input_params),
-                            false,
-                        );
-                        append_execution_log(
-                            &data_dir,
-                            &pkg.meta.id,
-                            false,
-                            duration_ms,
-                            &error_msg,
-                        );
-                    }
-                    Err(e) => {
-                        tracing::error!("Scheduled package '{}' execution error: {e}", pkg.meta.id);
-                        let pkg_finished_at = chrono::Utc::now();
-                        let duration_ms = (pkg_finished_at - pkg_started_at).num_milliseconds();
-                        let err_str = e.to_string();
-                        let failures = get_failure_count(db_path, &pkg.meta.id) + 1;
-                        let delay_secs = 60u64 * (1u64 << failures.min(10));
-                        notifier.notify_retry(&pkg.meta.id, failures, delay_secs);
-                        handle_execution_failure(
-                            &store,
-                            db_path,
-                            &pkg.meta.id,
-                            &pkg.meta.name,
-                            pkg_started_at,
-                            &err_str,
-                            Some(&pkg_input_params),
-                            false,
-                        );
-                        append_execution_log(&data_dir, &pkg.meta.id, false, duration_ms, &err_str);
-                    }
-                }
+                execute_scheduled_package(
+                    pkg,
+                    js_code,
+                    config,
+                    sandbox,
+                    &notifier,
+                    &data_dir,
+                    db_path,
+                    &pkg_mgr,
+                    &shared_ctx,
+                    context.clone(),
+                    config_values,
+                    input_params,
+                )
+                .await;
             }
         }
     }
