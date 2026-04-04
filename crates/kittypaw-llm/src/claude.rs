@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::provider::LlmProvider;
-use crate::util::strip_code_fences;
+use crate::util::{
+    classify_reqwest_error, handle_response_status, strip_code_fences, StatusAction,
+};
 
 pub struct ClaudeProvider {
     api_key: String,
@@ -75,6 +77,14 @@ struct ContentBlock {
 
 #[async_trait]
 impl LlmProvider for ClaudeProvider {
+    fn context_window(&self) -> usize {
+        200_000 // All current Claude models (Haiku, Sonnet, Opus)
+    }
+
+    fn max_tokens(&self) -> usize {
+        self.max_tokens as usize
+    }
+
     async fn generate(&self, messages: &[LlmMessage]) -> Result<String> {
         let system = messages
             .iter()
@@ -102,8 +112,8 @@ impl LlmProvider for ClaudeProvider {
             messages: api_messages,
         };
 
-        let mut retries = 0;
-        let max_retries = 3;
+        let mut retries = 0u32;
+        let max_retries = 3u32;
 
         loop {
             let response = self
@@ -115,41 +125,18 @@ impl LlmProvider for ClaudeProvider {
                 .json(&request)
                 .send()
                 .await
-                .map_err(|e| KittypawError::Llm {
-                    kind: LlmErrorKind::Other,
-                    message: format!("HTTP error: {e}"),
-                })?;
+                .map_err(|e| classify_reqwest_error(&e))?;
+
+            let response = match handle_response_status(response, &mut retries, max_retries) {
+                StatusAction::Success(r) => r,
+                StatusAction::Retry(delay) => {
+                    tokio::time::sleep(delay).await;
+                    continue;
+                }
+                StatusAction::Fatal(e) => return Err(e),
+            };
 
             let status = response.status();
-
-            if status == 429 {
-                retries += 1;
-                if retries > max_retries {
-                    return Err(KittypawError::Llm {
-                        kind: LlmErrorKind::RateLimit,
-                        message: "Rate limited after max retries".into(),
-                    });
-                }
-                let delay = std::time::Duration::from_millis(1000 * 2u64.pow(retries));
-                tracing::warn!("Rate limited, retrying in {:?}", delay);
-                tokio::time::sleep(delay).await;
-                continue;
-            }
-
-            if status.is_server_error() {
-                retries += 1;
-                if retries > max_retries {
-                    return Err(KittypawError::Llm {
-                        kind: LlmErrorKind::Other,
-                        message: format!("Server error {status} after max retries"),
-                    });
-                }
-                let delay = std::time::Duration::from_millis(1000 * 2u64.pow(retries));
-                tracing::warn!("Server error {status}, retrying in {:?}", delay);
-                tokio::time::sleep(delay).await;
-                continue;
-            }
-
             if !status.is_success() {
                 let body = response.text().await.unwrap_or_default();
                 let kind = LlmErrorKind::from_http_response(status.as_u16(), &body);
@@ -216,10 +203,7 @@ impl LlmProvider for ClaudeProvider {
             .json(&request)
             .send()
             .await
-            .map_err(|e| KittypawError::Llm {
-                kind: LlmErrorKind::Other,
-                message: format!("HTTP error: {e}"),
-            })?;
+            .map_err(|e| classify_reqwest_error(&e))?;
 
         let status = response.status();
         if !status.is_success() {
@@ -277,5 +261,17 @@ impl LlmProvider for ClaudeProvider {
         }
 
         Ok(strip_code_fences(&accumulated))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::provider::LlmProvider;
+
+    #[test]
+    fn test_context_window_returns_200k() {
+        let provider = ClaudeProvider::new("key".into(), "claude-sonnet-4-20250514".into(), 4096);
+        assert_eq!(provider.context_window(), 200_000);
     }
 }

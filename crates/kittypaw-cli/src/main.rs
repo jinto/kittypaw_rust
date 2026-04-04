@@ -39,6 +39,7 @@ fn build_registry(config: &Config) -> LlmRegistry {
             max_tokens: config.llm.max_tokens,
             default: true,
             base_url: None,
+            context_window: None,
         };
         LlmRegistry::from_configs(&[legacy])
     } else {
@@ -46,13 +47,28 @@ fn build_registry(config: &Config) -> LlmRegistry {
     }
 }
 
-/// Build a registry and return the default provider, or exit with an error message.
-fn require_provider(config: &Config) -> std::sync::Arc<dyn kittypaw_llm::provider::LlmProvider> {
+/// Build a registry and return the default + fallback providers.
+fn require_provider_with_fallback(
+    config: &Config,
+) -> (
+    std::sync::Arc<dyn kittypaw_llm::provider::LlmProvider>,
+    Option<std::sync::Arc<dyn kittypaw_llm::provider::LlmProvider>>,
+) {
     let registry = build_registry(config);
-    registry.default_provider().unwrap_or_else(|| {
+    let default = registry.default_provider().unwrap_or_else(|| {
         eprintln!("Error: No LLM provider configured. Set KITTYPAW_API_KEY or add [[models]] to kittypaw.toml.");
         std::process::exit(1);
-    })
+    });
+    let fallback = registry.fallback_provider();
+    if fallback.is_some() {
+        tracing::info!("Fallback LLM provider available");
+    }
+    (default, fallback)
+}
+
+/// Build a registry and return the default provider, or exit with an error message.
+fn require_provider(config: &Config) -> std::sync::Arc<dyn kittypaw_llm::provider::LlmProvider> {
+    require_provider_with_fallback(config).0
 }
 
 #[derive(Parser)]
@@ -1231,7 +1247,7 @@ async fn run_stdin() {
         std::process::exit(1);
     });
 
-    let provider = require_provider(&config);
+    let (provider, fallback) = require_provider_with_fallback(&config);
 
     let sandbox = kittypaw_sandbox::sandbox::Sandbox::new(config.sandbox.clone());
 
@@ -1243,8 +1259,16 @@ async fn run_stdin() {
 
     // Run agent loop with overall timeout to prevent indefinite blocking
     let timeout_secs = config.sandbox.timeout_secs as u64 * 4; // e.g. 30 * 4 = 120s
-    let loop_future =
-        agent_loop::run_agent_loop(event, &*provider, &sandbox, store, &config, None, None);
+    let loop_future = agent_loop::run_agent_loop(agent_loop::AgentLoopParams {
+        event,
+        provider: &*provider,
+        fallback_provider: fallback.as_deref(),
+        sandbox: &sandbox,
+        store,
+        config: &config,
+        on_token: None,
+        on_permission_request: None,
+    });
     match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), loop_future).await {
         Ok(Ok(output)) => {
             println!("{output}");

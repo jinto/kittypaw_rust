@@ -3,16 +3,14 @@ use tokio::sync::Mutex;
 
 use kittypaw_core::capability::CapabilityChecker;
 use kittypaw_core::error::{KittypawError, Result};
-use kittypaw_core::permission::{PermissionDecision, PermissionRequest};
 use kittypaw_core::types::{
     now_timestamp, AgentState, ConversationTurn, Event, EventType, ExecutionResult, LlmMessage,
     LoopPhase, Role, TransitionReason,
 };
 use kittypaw_llm::provider::LlmProvider;
 use kittypaw_sandbox::sandbox::Sandbox;
-use tracing::{info_span, Instrument};
-
 use kittypaw_store::Store;
+use tracing::{info_span, Instrument};
 
 const SYSTEM_PROMPT: &str = r#"You are KittyPaw, an AI agent that helps users by writing JavaScript (ES2020) code.
 
@@ -49,21 +47,29 @@ const SYSTEM_PROMPT: &str = r#"You are KittyPaw, an AI agent that helps users by
 
 const MAX_RETRIES: usize = 3;
 
-pub async fn run_agent_loop(
-    event: Event,
-    provider: &dyn LlmProvider,
-    sandbox: &Sandbox,
-    store: Arc<Mutex<Store>>,
-    config: &kittypaw_core::config::Config,
-    on_token: Option<std::sync::Arc<dyn Fn(String) + Send + Sync>>,
-    on_permission_request: Option<
-        Arc<
-            dyn Fn(PermissionRequest) -> tokio::sync::oneshot::Receiver<PermissionDecision>
-                + Send
-                + Sync,
-        >,
-    >,
-) -> Result<String> {
+pub struct AgentLoopParams<'a> {
+    pub event: Event,
+    pub provider: &'a dyn LlmProvider,
+    pub fallback_provider: Option<&'a dyn LlmProvider>,
+    pub sandbox: &'a Sandbox,
+    pub store: Arc<Mutex<Store>>,
+    pub config: &'a kittypaw_core::config::Config,
+    pub on_token: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    pub on_permission_request: Option<crate::skill_executor::PermissionCallback>,
+}
+
+pub async fn run_agent_loop(params: AgentLoopParams<'_>) -> Result<String> {
+    let AgentLoopParams {
+        event,
+        provider,
+        fallback_provider,
+        sandbox,
+        store,
+        config,
+        on_token,
+        on_permission_request,
+    } = params;
+
     let agent_id = match event.event_type {
         EventType::Telegram => format!("telegram-{}", event.session_id()),
         EventType::WebChat => format!("web-{}", event.session_id()),
@@ -91,10 +97,8 @@ pub async fn run_agent_loop(
         "agent state ready"
     );
 
-    // Build event text and persist user turn
     let event_text = format_event(&event);
 
-    // Add user turn
     let user_turn = ConversationTurn {
         role: Role::User,
         content: event_text.clone(),
@@ -110,6 +114,8 @@ pub async fn run_agent_loop(
 
     // Generate code with retry loop — each attempt uses progressively tighter compaction
     let mut last_error: Option<String> = None;
+    let mut active_provider: &dyn LlmProvider = provider;
+    let mut fallback_used = false;
 
     for attempt in 0..MAX_RETRIES {
         if attempt > 0 {
@@ -148,16 +154,19 @@ pub async fn run_agent_loop(
             .iter()
             .map(|m| crate::compaction::estimate_tokens(&m.content))
             .sum();
-        const TOKEN_BUDGET: usize = 8_000;
-        if est_tokens > TOKEN_BUDGET && attempt < MAX_RETRIES - 1 {
+        let token_budget = active_provider
+            .context_window()
+            .saturating_sub(active_provider.max_tokens());
+        if est_tokens > token_budget && attempt < MAX_RETRIES - 1 {
             tracing::warn!(
                 est_tokens,
-                budget = TOKEN_BUDGET,
+                budget = token_budget,
+                context_window = active_provider.context_window(),
                 attempt,
                 "Prompt exceeds token budget, applying tighter compaction"
             );
             last_error = Some(format!(
-                "Estimated {est_tokens} tokens exceeds budget {TOKEN_BUDGET}"
+                "Estimated {est_tokens} tokens exceeds budget {token_budget}"
             ));
             continue;
         }
@@ -174,12 +183,12 @@ pub async fn run_agent_loop(
 
         // Call LLM
         let llm_result = if let Some(ref cb) = on_token {
-            provider
+            active_provider
                 .generate_stream(&messages, cb.clone())
                 .instrument(info_span!("llm_generate"))
                 .await
         } else {
-            provider
+            active_provider
                 .generate(&messages)
                 .instrument(info_span!("llm_generate"))
                 .await
@@ -206,20 +215,46 @@ pub async fn run_agent_loop(
                 continue;
             }
             Err(kittypaw_core::error::KittypawError::Llm {
-                kind: kittypaw_core::error::LlmErrorKind::RateLimit,
+                kind:
+                    kittypaw_core::error::LlmErrorKind::RateLimit
+                    | kittypaw_core::error::LlmErrorKind::Network,
                 ref message,
             }) => {
+                // On last attempt, try fallback before giving up
+                if attempt >= MAX_RETRIES - 1 && !fallback_used {
+                    if let Some(fb) = fallback_provider {
+                        tracing::warn!(
+                            attempt,
+                            "Transient error exhausted retries, switching to fallback: {message}"
+                        );
+                        active_provider = fb;
+                        fallback_used = true;
+                        last_error = Some(message.clone());
+                        continue;
+                    }
+                }
                 tracing::warn!(
                     attempt,
-                    "Rate limit hit, sleeping 2s then retrying same prompt: {message}"
+                    "Transient error, sleeping 2s then retrying: {message}"
                 );
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                // Keep last_error so retry-exhausted path reports the real reason
                 last_error = Some(message.clone());
                 continue;
             }
             Err(kittypaw_core::error::KittypawError::Llm { ref message, .. }) => {
-                tracing::error!(attempt, "LLM error (non-retryable): {message}");
+                if !fallback_used {
+                    if let Some(fb) = fallback_provider {
+                        tracing::warn!(
+                            attempt,
+                            "LLM error, switching to fallback provider: {message}"
+                        );
+                        active_provider = fb;
+                        fallback_used = true;
+                        last_error = Some(message.clone());
+                        continue;
+                    }
+                }
+                tracing::error!(attempt, "LLM error (non-retryable, no fallback): {message}");
                 return Err(kittypaw_core::error::KittypawError::Llm {
                     kind: kittypaw_core::error::LlmErrorKind::Other,
                     message: message.clone(),
@@ -239,18 +274,13 @@ pub async fn run_agent_loop(
             "code generated"
         );
 
-        // Execute in sandbox
         let context = serde_json::json!({
             "event": event.payload,
             "event_type": format!("{:?}", event.event_type),
             "agent_id": agent_id,
         });
 
-        // Build a SkillResolver so JS skill stubs return real data
-        // (Http responses, Storage values, Llm outputs) instead of "null".
-        //
-        // Build a CapabilityChecker from the matching agent config.
-        // If no agent config matches, the checker is None (permissive mode).
+        // None = permissive mode (no agent config matched)
         let checker: Option<Arc<std::sync::Mutex<CapabilityChecker>>> = {
             let agent_config = config.agents.iter().find(|a| {
                 a.id == agent_id
@@ -298,8 +328,6 @@ pub async fn run_agent_loop(
             .await?;
 
         if exec_result.success {
-            // Skill calls were already executed inline by the resolver during
-            // sandbox execution. Log any that were captured for observability.
             if !exec_result.skill_calls.is_empty() {
                 tracing::info!(
                     "{} skill calls resolved inline during execution",
@@ -341,7 +369,6 @@ pub async fn run_agent_loop(
             return Ok(output);
         }
 
-        // Error — retry with feedback
         let err_msg = exec_result.error.unwrap_or("unknown error".into());
         tracing::warn!("Execution error (attempt {attempt}): {err_msg}");
         let reason = TransitionReason::ExecutionFailed {

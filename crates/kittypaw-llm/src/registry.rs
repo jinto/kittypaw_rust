@@ -1,14 +1,47 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use kittypaw_core::config::ModelConfig;
+use kittypaw_core::error::Result;
+use kittypaw_core::types::LlmMessage;
 
 use crate::claude::ClaudeProvider;
 use crate::openai::OpenAiProvider;
 use crate::provider::LlmProvider;
 
+/// Wraps an LlmProvider with a config-overridden context window.
+struct ConfiguredProvider {
+    inner: Arc<dyn LlmProvider>,
+    context_window_override: usize,
+}
+
+#[async_trait]
+impl LlmProvider for ConfiguredProvider {
+    async fn generate(&self, messages: &[LlmMessage]) -> Result<String> {
+        self.inner.generate(messages).await
+    }
+
+    async fn generate_stream(
+        &self,
+        messages: &[LlmMessage],
+        on_token: Arc<dyn Fn(String) + Send + Sync>,
+    ) -> Result<String> {
+        self.inner.generate_stream(messages, on_token).await
+    }
+
+    fn context_window(&self) -> usize {
+        self.context_window_override
+    }
+
+    fn max_tokens(&self) -> usize {
+        self.inner.max_tokens()
+    }
+}
+
 pub struct LlmRegistry {
     providers: HashMap<String, Arc<dyn LlmProvider>>,
+    insertion_order: Vec<String>,
     default_name: String,
 }
 
@@ -16,6 +49,7 @@ impl LlmRegistry {
     pub fn new() -> Self {
         Self {
             providers: HashMap::new(),
+            insertion_order: Vec::new(),
             default_name: String::new(),
         }
     }
@@ -25,6 +59,9 @@ impl LlmRegistry {
     pub fn register(&mut self, name: &str, provider: Arc<dyn LlmProvider>) {
         if self.default_name.is_empty() {
             self.default_name = name.to_string();
+        }
+        if !self.providers.contains_key(name) {
+            self.insertion_order.push(name.to_string());
         }
         self.providers.insert(name.to_string(), provider);
     }
@@ -42,6 +79,15 @@ impl LlmRegistry {
     /// Get the default provider.
     pub fn default_provider(&self) -> Option<Arc<dyn LlmProvider>> {
         self.providers.get(&self.default_name).cloned()
+    }
+
+    /// Get the first registered provider (by insertion order) that is NOT the default.
+    /// Returns None if there is only one provider or no providers.
+    pub fn fallback_provider(&self) -> Option<Arc<dyn LlmProvider>> {
+        self.insertion_order
+            .iter()
+            .find(|name| *name != &self.default_name)
+            .and_then(|name| self.providers.get(name).cloned())
     }
 
     /// List registered provider names.
@@ -126,6 +172,16 @@ impl LlmRegistry {
                     ))
                 }
                 _ => continue,
+            };
+
+            // Wrap with config-overridden context window if specified
+            let provider = if let Some(cw) = cfg.context_window {
+                Arc::new(ConfiguredProvider {
+                    inner: provider,
+                    context_window_override: cw as usize,
+                }) as Arc<dyn LlmProvider>
+            } else {
+                provider
             };
 
             registry.register(&cfg.name, provider);
@@ -273,6 +329,7 @@ mod tests {
             max_tokens: 1024,
             default: false,
             base_url: None,
+            context_window: None,
         }];
         let registry = LlmRegistry::from_configs(&configs);
         assert!(registry.list().is_empty());
@@ -288,6 +345,7 @@ mod tests {
             max_tokens: 4096,
             default: true,
             base_url: None,
+            context_window: None,
         }];
         let registry = LlmRegistry::from_configs(&configs);
         assert_eq!(registry.list().len(), 1);
@@ -325,5 +383,58 @@ mod tests {
         assert!(super::validate_llm_base_url("http://localhost:11434/v1").is_ok());
         assert!(super::validate_llm_base_url("http://127.0.0.1:8080/v1").is_ok());
         assert!(super::validate_llm_base_url("https://api.openai.com/v1").is_ok());
+    }
+
+    #[test]
+    fn test_configured_provider_overrides_context_window() {
+        let configs = vec![ModelConfig {
+            name: "local-qwen".into(),
+            provider: "ollama".into(),
+            model: "qwen3.5:27b".into(),
+            api_key: String::new(),
+            max_tokens: 4096,
+            default: true,
+            base_url: None,
+            context_window: Some(32768),
+        }];
+        let registry = LlmRegistry::from_configs(&configs);
+        let provider = registry.default_provider().unwrap();
+        assert_eq!(provider.context_window(), 32768);
+    }
+
+    #[test]
+    fn test_fallback_provider_returns_non_default() {
+        let mut registry = LlmRegistry::new();
+        let provider_a: Arc<dyn LlmProvider> = Arc::new(MockProvider);
+        let provider_b: Arc<dyn LlmProvider> = Arc::new(MockProviderB);
+        registry.register("alpha", provider_a);
+        registry.register("beta", provider_b);
+        // "alpha" is default (first registered)
+        assert!(registry.fallback_provider().is_some());
+    }
+
+    #[test]
+    fn test_fallback_provider_none_when_single() {
+        let mut registry = LlmRegistry::new();
+        let provider: Arc<dyn LlmProvider> = Arc::new(MockProvider);
+        registry.register("only", provider);
+        assert!(registry.fallback_provider().is_none());
+    }
+
+    #[test]
+    fn test_no_context_window_uses_provider_default() {
+        let configs = vec![ModelConfig {
+            name: "local-qwen".into(),
+            provider: "ollama".into(),
+            model: "qwen3.5:27b".into(),
+            api_key: String::new(),
+            max_tokens: 4096,
+            default: true,
+            base_url: None,
+            context_window: None,
+        }];
+        let registry = LlmRegistry::from_configs(&configs);
+        let provider = registry.default_provider().unwrap();
+        assert_eq!(provider.context_window(), 8_192); // OpenAiProvider default for unknown model
     }
 }

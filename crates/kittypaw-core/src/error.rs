@@ -8,6 +8,8 @@ pub enum LlmErrorKind {
     RateLimit,
     /// HTTP 400 with a context/token length error in the response body.
     TokenLimit,
+    /// Network-level failure (connection refused, DNS, TLS, timeout).
+    Network,
     /// Any other LLM error.
     Other,
 }
@@ -24,7 +26,9 @@ impl LlmErrorKind {
     pub fn from_http_response(status: u16, body: &str) -> Self {
         if status == 429 {
             Self::RateLimit
-        } else if status == 400 && TOKEN_LIMIT_INDICATORS.iter().any(|s| body.contains(s)) {
+        } else if status == 413
+            || (status == 400 && TOKEN_LIMIT_INDICATORS.iter().any(|s| body.contains(s)))
+        {
             Self::TokenLimit
         } else {
             Self::Other
@@ -102,7 +106,7 @@ impl KittypawError {
         ) || matches!(
             self,
             KittypawError::Llm {
-                kind: LlmErrorKind::RateLimit,
+                kind: LlmErrorKind::RateLimit | LlmErrorKind::Network,
                 ..
             }
         )
@@ -162,6 +166,23 @@ mod tests {
             message: "bad".into(),
         }
         .is_transient());
+    }
+
+    #[test]
+    fn test_is_transient_llm_network() {
+        assert!(KittypawError::Llm {
+            kind: LlmErrorKind::Network,
+            message: "connection refused".into(),
+        }
+        .is_transient());
+    }
+
+    #[test]
+    fn test_from_http_response_413() {
+        assert_eq!(
+            LlmErrorKind::from_http_response(413, ""),
+            LlmErrorKind::TokenLimit
+        );
     }
 
     #[test]

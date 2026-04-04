@@ -109,6 +109,9 @@ pub struct ModelConfig {
     pub default: bool,
     #[serde(default)]
     pub base_url: Option<String>,
+    /// Override the provider's auto-detected context window (in tokens).
+    #[serde(default)]
+    pub context_window: Option<u32>,
 }
 
 fn default_stt_language() -> String {

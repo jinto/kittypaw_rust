@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::provider::LlmProvider;
-use crate::util::strip_code_fences;
+use crate::util::{
+    classify_reqwest_error, handle_response_status, strip_code_fences, StatusAction,
+};
 
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
 
@@ -115,6 +117,25 @@ fn build_messages(messages: &[LlmMessage]) -> Vec<OpenAiMessage> {
 
 #[async_trait]
 impl LlmProvider for OpenAiProvider {
+    fn max_tokens(&self) -> usize {
+        self.max_tokens as usize
+    }
+
+    fn context_window(&self) -> usize {
+        if self.model.starts_with("gpt-4o") || self.model.starts_with("gpt-4-turbo") {
+            128_000
+        } else if self.model.starts_with("o1")
+            || self.model.starts_with("o3")
+            || self.model.starts_with("o4")
+        {
+            200_000
+        } else if self.model.starts_with("gpt-3.5") {
+            16_385
+        } else {
+            8_192 // conservative for unknown/local models (Ollama)
+        }
+    }
+
     async fn generate(&self, messages: &[LlmMessage]) -> Result<String> {
         let api_messages = build_messages(messages);
 
@@ -124,8 +145,8 @@ impl LlmProvider for OpenAiProvider {
             messages: api_messages,
         };
 
-        let mut retries = 0;
-        let max_retries = 3;
+        let mut retries = 0u32;
+        let max_retries = 3u32;
 
         let url = format!("{}/chat/completions", self.base_url);
 
@@ -141,41 +162,18 @@ impl LlmProvider for OpenAiProvider {
                 .json(&request)
                 .send()
                 .await
-                .map_err(|e| KittypawError::Llm {
-                    kind: LlmErrorKind::Other,
-                    message: format!("HTTP error: {e}"),
-                })?;
+                .map_err(|e| classify_reqwest_error(&e))?;
+
+            let response = match handle_response_status(response, &mut retries, max_retries) {
+                StatusAction::Success(r) => r,
+                StatusAction::Retry(delay) => {
+                    tokio::time::sleep(delay).await;
+                    continue;
+                }
+                StatusAction::Fatal(e) => return Err(e),
+            };
 
             let status = response.status();
-
-            if status == 429 {
-                retries += 1;
-                if retries > max_retries {
-                    return Err(KittypawError::Llm {
-                        kind: LlmErrorKind::RateLimit,
-                        message: "Rate limited after max retries".into(),
-                    });
-                }
-                let delay = std::time::Duration::from_millis(1000 * 2u64.pow(retries));
-                tracing::warn!("Rate limited, retrying in {:?}", delay);
-                tokio::time::sleep(delay).await;
-                continue;
-            }
-
-            if status.is_server_error() {
-                retries += 1;
-                if retries > max_retries {
-                    return Err(KittypawError::Llm {
-                        kind: LlmErrorKind::Other,
-                        message: format!("Server error {status} after max retries"),
-                    });
-                }
-                let delay = std::time::Duration::from_millis(1000 * 2u64.pow(retries));
-                tracing::warn!("Server error {status}, retrying in {:?}", delay);
-                tokio::time::sleep(delay).await;
-                continue;
-            }
-
             if !status.is_success() {
                 let body = response.text().await.unwrap_or_default();
                 let kind = LlmErrorKind::from_http_response(status.as_u16(), &body);
@@ -227,10 +225,7 @@ impl LlmProvider for OpenAiProvider {
             .json(&request)
             .send()
             .await
-            .map_err(|e| KittypawError::Llm {
-                kind: LlmErrorKind::Other,
-                message: format!("HTTP error: {e}"),
-            })?;
+            .map_err(|e| classify_reqwest_error(&e))?;
 
         let status = response.status();
         if !status.is_success() {
@@ -365,5 +360,22 @@ mod tests {
             4096,
         );
         // Empty API key should not panic
+    }
+
+    #[test]
+    fn test_context_window_gpt4o() {
+        let provider = OpenAiProvider::new("key".into(), "gpt-4o".into(), 4096);
+        assert_eq!(provider.context_window(), 128_000);
+    }
+
+    #[test]
+    fn test_context_window_unknown_model() {
+        let provider = OpenAiProvider::with_base_url(
+            "http://localhost:11434/v1".into(),
+            String::new(),
+            "qwen3.5:27b".into(),
+            4096,
+        );
+        assert_eq!(provider.context_window(), 8_192);
     }
 }

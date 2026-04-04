@@ -171,6 +171,10 @@
 - [x] 전체 에이전트 루프 타임아웃: main.rs에서 tokio::time::timeout으로 sandbox_timeout × 4 적용
 - [x] Circuit Breaker: TokenLimit at max compaction(attempt≥2) → 즉시 break, LLM API 낭비 차단
 - [x] Safe/Unsafe 스킬 병렬화 분류: is_read_only_skill_call() + 읽기 전용 배치 감지 로그 (병렬 실행 인프라)
+- [x] LLM 네트워크 에러 복원력: LlmErrorKind::Network + 413→TokenLimit + reqwest 에러 분류 + agent_loop 재시도
+- [x] 동적 토큰 예산: LlmProvider::context_window() + max_tokens() trait + ConfiguredProvider config override
+- [x] Fallback 모델 자동 전환: LlmRegistry::fallback_provider() (insertion order 보장) + transient 에러 소진 후 전환
+- [x] LLM 프로바이더 코드 정리: classify_reqwest_error + handle_response_status 공유 헬퍼 + AgentLoopParams 구조체
 
 ### 기타 백로그
 - [ ] 웹 검색 프로바이더 폴백 체인 (Exa → DuckDuckGo)
