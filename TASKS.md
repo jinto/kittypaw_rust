@@ -95,7 +95,7 @@
 - [x] kbo-scores (KBO 프로야구 결과)
 - [x] price-watch (가격 알림)
 - [x] zipcode-lookup (우편번호 검색)
-- [ ] 사용자 리서치 기반 1개 추가
+- [x] exchange-rate (환율 알림)
 
 ### 🟠 P1: 배포 파이프라인
 - [x] kittypaw.app 도메인 DNS 설정 (Cloudflare → GitHub Pages)

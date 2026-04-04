@@ -1,0 +1,69 @@
+[package]
+id = "exchange-rate"
+name = "환율 알림"
+version = "1.0.0"
+description = "관심 통화의 환율을 주기적으로 확인하고, 목표 환율에 도달하면 알림을 보냅니다."
+author = "KittyPaw Team"
+category = "finance"
+tags = ["exchange", "currency", "finance", "telegram", "alert"]
+
+[trigger]
+type = "schedule"
+cron = "0 9,18 * * 1-5"
+
+[permissions]
+primitives = ["Http", "Telegram", "Storage"]
+allowed_hosts = ["open.er-api.com"]
+
+[[config.fields]]
+key = "telegram_token"
+label = "텔레그램 봇 토큰"
+type = "secret"
+required = true
+setup_guide = "1. 텔레그램에서 @BotFather 를 검색\n2. /newbot 명령어 입력\n3. 봇 이름과 username 설정\n4. 받은 토큰을 여기에 붙여넣기"
+
+[[config.fields]]
+key = "chat_id"
+label = "텔레그램 채팅 ID"
+type = "string"
+required = true
+setup_guide = "1. 만든 봇에게 아무 메시지를 보내기\n2. @userinfobot 에게 메시지를 보내면 채팅 ID 확인 가능"
+
+[[config.fields]]
+key = "currencies"
+label = "관심 통화 (쉼표 구분)"
+type = "string"
+required = false
+default = "USD,JPY,EUR,CNY"
+setup_guide = "확인하고 싶은 통화 코드를 쉼표로 구분하여 입력하세요.\n예: USD,JPY,EUR,CNY,GBP"
+
+[[config.fields]]
+key = "alert_currency"
+label = "알림 통화"
+type = "string"
+required = false
+default = ""
+setup_guide = "목표 환율 알림을 받을 통화 (예: USD)"
+
+[[config.fields]]
+key = "alert_above"
+label = "이 환율 이상이면 알림 (원)"
+type = "string"
+required = false
+default = "0"
+setup_guide = "환율이 이 값 이상이면 알림. 0이면 비활성."
+
+[[config.fields]]
+key = "alert_below"
+label = "이 환율 이하이면 알림 (원)"
+type = "string"
+required = false
+default = "0"
+setup_guide = "환율이 이 값 이하이면 알림. 0이면 비활성."
+
+[[config.fields]]
+key = "schedule"
+label = "Cron Schedule"
+type = "cron"
+required = false
+default = "0 9,18 * * 1-5"
