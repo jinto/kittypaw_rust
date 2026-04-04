@@ -1232,7 +1232,24 @@ async fn execute_llm(
             .to_string()
     };
 
-    Ok(serde_json::json!({ "text": text }))
+    // Extract usage from response (works for both OpenAI and Claude formats)
+    let input_tokens = body["usage"]["input_tokens"]
+        .as_u64()
+        .or_else(|| body["usage"]["prompt_tokens"].as_u64())
+        .unwrap_or(0);
+    let output_tokens = body["usage"]["output_tokens"]
+        .as_u64()
+        .or_else(|| body["usage"]["completion_tokens"].as_u64())
+        .unwrap_or(0);
+
+    Ok(serde_json::json!({
+        "text": text,
+        "usage": {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "model": model
+        }
+    }))
 }
 
 fn execute_file(call: &SkillCall, data_dir: Option<&Path>) -> Result<serde_json::Value> {

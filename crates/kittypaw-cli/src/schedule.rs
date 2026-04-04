@@ -340,6 +340,7 @@ fn handle_execution_failure(
         false,
         failures as i32,
         input_params,
+        None, // usage_json — not yet tracked in failure path
     );
     // Store failure hint for self-improvement
     let hint_key = format!("failure_hint:{}", id);
@@ -516,6 +517,7 @@ pub async fn run_schedule_loop(
                                 true,
                                 0,
                                 Some(&skill_input_params),
+                                None, // usage_json — TODO: aggregate from skill calls
                             );
                             set_last_run(db_path, &skill.name, Utc::now()).ok();
                             reset_failure_count(db_path, &skill.name).ok();
@@ -732,6 +734,7 @@ pub async fn run_schedule_loop(
                                 true,
                                 0,
                                 Some(&pkg_input_params),
+                                None, // usage_json — TODO: aggregate from chain step calls
                             );
                             set_last_run(db_path, &pkg.meta.id, Utc::now()).ok();
                             reset_failure_count(db_path, &pkg.meta.id).ok();

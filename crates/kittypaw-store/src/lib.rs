@@ -23,6 +23,7 @@ fn migrations() -> Migrations<'static> {
         M::up(include_str!("migrations/004_permissions.sql")),
         M::up(include_str!("migrations/005_execution_history.sql")),
         M::up(include_str!("migrations/006_fts5_memory.sql")),
+        M::up(include_str!("migrations/007_token_usage.sql")),
     ])
 }
 
@@ -35,6 +36,8 @@ pub struct ExecutionRecord {
     pub result_summary: String,
     pub success: bool,
     pub retry_count: i32,
+    /// JSON-serialized per-call token usage ledger.
+    pub usage_json: Option<String>,
 }
 
 pub struct ExecutionStats {
@@ -42,6 +45,7 @@ pub struct ExecutionStats {
     pub successful: u32,
     pub failed: u32,
     pub auto_retries: u32,
+    pub total_tokens: u64,
 }
 
 impl Store {
@@ -381,11 +385,12 @@ impl Store {
         success: bool,
         retry_count: i32,
         input_params: Option<&str>,
+        usage_json: Option<&str>,
     ) -> Result<()> {
         self.conn.execute(
             "INSERT INTO execution_history \
-                 (skill_id, skill_name, started_at, finished_at, duration_ms, input_params, result_summary, success, retry_count) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                 (skill_id, skill_name, started_at, finished_at, duration_ms, input_params, result_summary, success, retry_count, usage_json) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 skill_id,
                 skill_name,
@@ -396,6 +401,7 @@ impl Store {
                 result_summary,
                 success as i32,
                 retry_count,
+                usage_json,
             ],
         )?;
         Ok(())
@@ -404,7 +410,7 @@ impl Store {
     /// Get recent executions (for dashboard activity log)
     pub fn recent_executions(&self, limit: usize) -> Result<Vec<ExecutionRecord>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, skill_id, skill_name, started_at, duration_ms, result_summary, success, retry_count \
+            "SELECT id, skill_id, skill_name, started_at, duration_ms, result_summary, success, retry_count, usage_json \
                  FROM execution_history ORDER BY started_at DESC LIMIT ?1",
         )?;
 
@@ -419,6 +425,7 @@ impl Store {
                     result_summary: row.get(5)?,
                     success: row.get::<_, i32>(6)? != 0,
                     retry_count: row.get(7)?,
+                    usage_json: row.get(8)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -448,11 +455,30 @@ impl Store {
 
         let failed = total_runs.saturating_sub(successful);
 
+        // Sum tokens from usage_json: parse each JSON array and sum input+output tokens
+        let total_tokens: u64 = {
+            let mut stmt = self.conn.prepare(
+                "SELECT usage_json FROM execution_history WHERE date(started_at) = date('now') AND usage_json IS NOT NULL",
+            )?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            let mut total = 0u64;
+            for json_str in rows.flatten() {
+                if let Ok(entries) = serde_json::from_str::<Vec<serde_json::Value>>(&json_str) {
+                    for entry in entries {
+                        total += entry["input_tokens"].as_u64().unwrap_or(0);
+                        total += entry["output_tokens"].as_u64().unwrap_or(0);
+                    }
+                }
+            }
+            total
+        };
+
         Ok(ExecutionStats {
             total_runs,
             successful,
             failed,
             auto_retries,
+            total_tokens,
         })
     }
 
@@ -513,7 +539,7 @@ impl Store {
         // Wrap as phrase to prevent any remaining operator misinterpretation.
         let safe_query = format!("\"{}\"", sanitized.replace('"', "\"\""));
         let mut stmt = self.conn.prepare(
-            "SELECT e.id, e.skill_id, e.skill_name, e.started_at, e.duration_ms, e.result_summary, e.success, e.retry_count \
+            "SELECT e.id, e.skill_id, e.skill_name, e.started_at, e.duration_ms, e.result_summary, e.success, e.retry_count, e.usage_json \
              FROM execution_history e \
              JOIN execution_fts f ON e.id = f.rowid \
              WHERE execution_fts MATCH ?1 \
@@ -530,6 +556,7 @@ impl Store {
                     result_summary: row.get(5)?,
                     success: row.get::<_, i32>(6)? != 0,
                     retry_count: row.get(7)?,
+                    usage_json: row.get(8)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1069,6 +1096,7 @@ mod tests {
                 true,
                 0,
                 None,
+                None,
             )
             .unwrap();
 
@@ -1092,13 +1120,13 @@ mod tests {
         // Insert two successes and one failure with today's datetime
         let today = "2024-06-01 10:00:00";
         store
-            .record_execution("s1", "Skill1", today, today, 100, "", true, 0, None)
+            .record_execution("s1", "Skill1", today, today, 100, "", true, 0, None, None)
             .unwrap();
         store
-            .record_execution("s2", "Skill2", today, today, 200, "", true, 1, None)
+            .record_execution("s2", "Skill2", today, today, 200, "", true, 1, None, None)
             .unwrap();
         store
-            .record_execution("s3", "Skill3", today, today, 300, "", false, 2, None)
+            .record_execution("s3", "Skill3", today, today, 300, "", false, 2, None, None)
             .unwrap();
 
         // Use raw SQL to simulate "today" by querying with a fixed date
@@ -1141,6 +1169,7 @@ mod tests {
                 "",
                 true,
                 0,
+                None,
                 None,
             )
             .unwrap();
@@ -1195,6 +1224,7 @@ mod tests {
                 true,
                 0,
                 None,
+                None,
             )
             .unwrap();
         store
@@ -1207,6 +1237,7 @@ mod tests {
                 "Hacker News 3건 요약",
                 true,
                 0,
+                None,
                 None,
             )
             .unwrap();

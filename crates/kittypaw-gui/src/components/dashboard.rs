@@ -118,6 +118,7 @@ pub fn Dashboard() -> Element {
         successful: 0,
         failed: 0,
         auto_retries: 0,
+        total_tokens: 0,
     });
     let mut recent = use_signal::<Vec<ExecutionRecord>>(Vec::new);
     let mut installed_count = use_signal(|| 0u32);
@@ -198,9 +199,10 @@ pub fn Dashboard() -> Element {
 
             // ── Stat Cards ────────────────────────────────────────────────
             div {
-                style: "display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 18px;",
+                style: "display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px;",
                 StatCard { label: "Active Skills", value: active_skills_val, accent: false }
                 StatCard { label: "Today's Runs", value: today_runs_val, accent: false }
+                StatCard { label: "Today's Tokens", value: format!("{}", stats.read().total_tokens), accent: false }
                 StatCard { label: "Silent Optimizations", value: silent_opts_val, accent: true }
             }
 
