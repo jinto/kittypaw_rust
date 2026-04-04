@@ -6,7 +6,6 @@
 const ctx = JSON.parse(__context__);
 const config = ctx.config || {};
 
-const telegramToken = config.telegram_token;
 const chatId = config.chat_id;
 const productUrl = config.product_url;
 const targetPrice = Number(config.target_price) || 0;
@@ -193,7 +192,7 @@ if (targetPrice > 0 && currentPrice <= targetPrice) {
     `_목표 가격 이하로 떨어졌습니다!_`,
   ].join("\n");
 
-  await Telegram.sendMessage(telegramToken, chatId, message, { parse_mode: "Markdown" });
+  await Telegram.sendMessage(chatId, message, { parse_mode: "Markdown" });
   alertSent = true;
 } else if (targetPrice === 0 && lastPrice !== null && currentPrice !== lastPrice) {
   // --- Change-tracking mode: any price movement ---
@@ -210,7 +209,7 @@ if (targetPrice > 0 && currentPrice <= targetPrice) {
     `변동: ${arrow} ${fmt(Math.abs(delta))}원 (${pct}%)`,
   ].join("\n");
 
-  await Telegram.sendMessage(telegramToken, chatId, message, { parse_mode: "Markdown" });
+  await Telegram.sendMessage(chatId, message, { parse_mode: "Markdown" });
   alertSent = true;
 }
 

@@ -5,7 +5,6 @@
 const ctx = JSON.parse(__context__);
 const config = ctx.config || {};
 
-const telegramToken = config.telegram_token;
 const chatId = config.chat_id;
 const apiKey = config.api_key;
 const stationName = config.station_name || "강남";
@@ -113,6 +112,6 @@ lines.push("_data.seoul.go.kr · Powered by KittyPaw_");
 
 const message = lines.join("\n");
 
-await Telegram.sendMessage(telegramToken, chatId, message, { parse_mode: "Markdown" });
+await Telegram.sendMessage(chatId, message, { parse_mode: "Markdown" });
 
 return "Arrival info sent for " + stationName + " (" + items.length + " trains).";

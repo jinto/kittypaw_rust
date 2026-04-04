@@ -5,7 +5,6 @@
 const ctx = JSON.parse(__context__);
 const config = ctx.config || {};
 
-const telegramToken = config.telegram_token;
 const chatId = config.chat_id;
 const carrier = config.carrier;
 const trackingNumber = config.tracking_number;
@@ -81,6 +80,6 @@ const message = [
   `${latestTime}`,
 ].join("\n");
 
-await Telegram.sendMessage(telegramToken, chatId, message, { parse_mode: "Markdown" });
+await Telegram.sendMessage(chatId, message, { parse_mode: "Markdown" });
 
 return `Notification sent. Status changed from "${lastStatus || "(none)"}" to "${latestStatus}".`;

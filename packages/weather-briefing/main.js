@@ -5,7 +5,6 @@
 const ctx = JSON.parse(__context__);
 const config = ctx.config || {};
 
-const telegramToken = config.telegram_token;
 const chatId = config.chat_id;
 const city = config.city || "Seoul";
 const latitude = config.latitude || "37.57";
@@ -73,6 +72,6 @@ const lines = [
 ];
 const message = lines.join("\n");
 
-await Telegram.sendMessage(telegramToken, chatId, message, { parse_mode: "Markdown" });
+await Telegram.sendMessage(chatId, message, { parse_mode: "Markdown" });
 
 return `Weather briefing sent for ${city} on ${today}.`;

@@ -5,7 +5,6 @@
 const ctx = JSON.parse(__context__);
 const config = ctx.config || {};
 
-const telegramToken = config.telegram_token;
 const chatId = config.chat_id;
 const currencies = (config.currencies || "USD,JPY,EUR,CNY")
   .split(",")
@@ -106,7 +105,7 @@ parts.push(`_${updateTime}_`);
 parts.push(`_Powered by KittyPaw_`);
 
 const message = parts.join("\n");
-await Telegram.sendMessage(telegramToken, chatId, message, {
+await Telegram.sendMessage(chatId, message, {
   parse_mode: "Markdown",
 });
 

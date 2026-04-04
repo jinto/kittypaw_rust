@@ -1237,56 +1237,48 @@ async fn run_status() {
         }
     };
 
-    match store.today_stats() {
-        Ok(stats) => {
+    let stats = match store.today_stats() {
+        Ok(s) => {
             println!("=== KittyPaw Status ===");
             println!(
                 "Today: {} runs ({} ok, {} failed), {} retries, {} tokens",
-                stats.total_runs,
-                stats.successful,
-                stats.failed,
-                stats.auto_retries,
-                stats.total_tokens
+                s.total_runs, s.successful, s.failed, s.auto_retries, s.total_tokens
             );
+            Some(s)
         }
-        Err(e) => eprintln!("Error loading stats: {e}"),
-    }
+        Err(e) => {
+            eprintln!("Error loading stats: {e}");
+            None
+        }
+    };
 
     match store.recent_executions(5) {
-        Ok(records) => {
-            if records.is_empty() {
-                println!("\nNo recent executions.");
-            } else {
-                println!("\nRecent executions:");
-                for r in &records {
-                    let status = if r.success { "ok" } else { "FAIL" };
-                    let tokens = parse_usage_tokens(&r.usage_json);
-                    println!(
-                        "  {} | {:<20} | {:>4} | {:>6}ms | {} tokens",
-                        &r.started_at[..19.min(r.started_at.len())],
-                        r.skill_name,
-                        status,
-                        r.duration_ms,
-                        tokens
-                    );
-                }
+        Ok(records) if !records.is_empty() => {
+            println!("\nRecent executions:");
+            for r in &records {
+                let status = if r.success { "ok" } else { "FAIL" };
+                let tokens = parse_usage_tokens(&r.usage_json);
+                println!(
+                    "  {} | {:<20} | {:>4} | {:>6}ms | {} tokens",
+                    &r.started_at[..19.min(r.started_at.len())],
+                    r.skill_name,
+                    status,
+                    r.duration_ms,
+                    tokens
+                );
             }
         }
+        Ok(_) => println!("\nNo recent executions."),
         Err(e) => eprintln!("Error loading executions: {e}"),
     }
 
-    // Show token budget if configured
-    if config.features.daily_token_limit > 0 {
-        if let Ok(stats) = store.today_stats() {
-            let pct = if config.features.daily_token_limit > 0 {
-                (stats.total_tokens as f64 / config.features.daily_token_limit as f64 * 100.0)
-                    as u64
-            } else {
-                0
-            };
+    if let Some(ref s) = stats {
+        if config.features.daily_token_limit > 0 {
+            let pct =
+                (s.total_tokens as f64 / config.features.daily_token_limit as f64 * 100.0) as u64;
             println!(
                 "\nToken budget: {}/{} ({}%)",
-                stats.total_tokens, config.features.daily_token_limit, pct
+                s.total_tokens, config.features.daily_token_limit, pct
             );
         }
     }

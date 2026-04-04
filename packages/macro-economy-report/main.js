@@ -6,7 +6,6 @@ const ctx = JSON.parse(__context__);
 const config = ctx.config || {};
 
 const tickers = (config.tickers || "SPY,QQQ,TLT,GLD").split(",").map(t => t.trim());
-const telegramToken = config.telegram_token;
 const chatId = config.chat_id;
 
 // --- Fetch price data for a single ticker ---
@@ -85,7 +84,7 @@ const lines = [
 const message = lines.join("\n");
 
 // Send to Telegram
-await Telegram.sendMessage(telegramToken, chatId, message, { parse_mode: "Markdown" });
+await Telegram.sendMessage(chatId, message, { parse_mode: "Markdown" });
 
 // Cache last run date in Storage so other skills can check freshness
 await Storage.set("macro_economy_last_run", JSON.stringify({ date: today, tickers }));

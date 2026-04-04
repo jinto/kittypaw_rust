@@ -5,7 +5,6 @@
 const ctx = JSON.parse(__context__);
 const config = ctx.config || {};
 
-const telegramToken = config.telegram_token;
 const chatId = config.chat_id;
 const apiKey = config.juso_api_key;
 
@@ -49,7 +48,7 @@ if (!common || common.errorCode !== "0") {
 const jusoList = result.juso;
 if (!jusoList || jusoList.length === 0) {
   const noResultMsg = `"${query}"에 대한 검색 결과가 없습니다.`;
-  await Telegram.sendMessage(telegramToken, chatId, noResultMsg);
+  await Telegram.sendMessage(chatId, noResultMsg);
   return noResultMsg;
 }
 
@@ -76,6 +75,6 @@ if (parseInt(totalCount, 10) > 5) {
 lines.push("_출처: 도로명주소 API · Powered by KittyPaw_");
 
 const message = lines.join("\n");
-await Telegram.sendMessage(telegramToken, chatId, message, { parse_mode: "Markdown" });
+await Telegram.sendMessage(chatId, message, { parse_mode: "Markdown" });
 
 return `우편번호 검색 완료: "${query}" — ${jusoList.length}건 전송`;

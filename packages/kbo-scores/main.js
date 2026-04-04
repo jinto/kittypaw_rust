@@ -6,7 +6,6 @@
 const ctx = JSON.parse(__context__);
 const config = ctx.config || {};
 
-const telegramToken = config.telegram_token;
 const chatId = config.chat_id;
 const myTeam = config.my_team || "";
 
@@ -131,7 +130,7 @@ if (games.length === 0) {
 // --- Handle no-game day ---
 if (games.length === 0) {
   const noGameMsg = `baseball  *KBO ${dateDisplay}*\n\n오늘은 경기가 없습니다.`;
-  await Telegram.sendMessage(telegramToken, chatId, noGameMsg, {
+  await Telegram.sendMessage(chatId, noGameMsg, {
     parse_mode: "Markdown",
   });
   return `No KBO games found for ${dateDisplay}.`;
@@ -167,7 +166,7 @@ const footer = "_Powered by KittyPaw_";
 
 const message = [header, teamNote, "", body, "", footer].join("\n");
 
-await Telegram.sendMessage(telegramToken, chatId, message, {
+await Telegram.sendMessage(chatId, message, {
   parse_mode: "Markdown",
 });
 

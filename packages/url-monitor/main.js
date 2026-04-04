@@ -6,7 +6,6 @@
 const ctx = JSON.parse(__context__);
 const config = ctx.config || {};
 
-const telegramToken = config.telegram_token;
 const chatId = config.chat_id;
 const targetUrl = config.target_url;
 
@@ -91,7 +90,7 @@ if (statusChanged || isFirstCheck) {
     `_Powered by KittyPaw URL Monitor_`,
   ].join("\n");
 
-  await Telegram.sendMessage(telegramToken, chatId, message, { parse_mode: "Markdown" });
+  await Telegram.sendMessage(chatId, message, { parse_mode: "Markdown" });
   alertSent = true;
 }
 

@@ -5,7 +5,6 @@
 const ctx = JSON.parse(__context__);
 const config = ctx.config || {};
 
-const telegramToken = config.telegram_token;
 const chatId = config.chat_id;
 const myNumbersRaw = config.my_numbers || "";
 
@@ -82,6 +81,6 @@ const message = [
   `일치: ${matchCount}개 — ${prize}`,
 ].join("\n");
 
-await Telegram.sendMessage(telegramToken, chatId, message, { parse_mode: "Markdown" });
+await Telegram.sendMessage(chatId, message, { parse_mode: "Markdown" });
 
 return `Lotto check done. Round ${round}: matched ${matchCount} numbers. Prize: ${prize}`;
