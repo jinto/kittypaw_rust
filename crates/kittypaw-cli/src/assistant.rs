@@ -118,6 +118,119 @@ fn is_admin_event(event: &Event, config: &Config) -> bool {
 }
 
 /// Run one turn of the assistant conversation.
+async fn execute_actions(
+    actions: &[AssistantAction],
+    ctx: &AssistantContext<'_>,
+) -> (Vec<String>, Vec<AssistantAction>) {
+    let mut response_parts: Vec<String> = Vec::new();
+    let mut actions_taken: Vec<AssistantAction> = Vec::new();
+
+    for action in actions {
+        match action {
+            AssistantAction::Reply { text } => {
+                response_parts.push(text.clone());
+            }
+            AssistantAction::SearchRegistry { query } => {
+                let results = search_entries(ctx.registry_entries, query);
+                if results.is_empty() {
+                    response_parts.push(
+                        "아직 스킬 레지스트리에 맞는 스킬이 없어요. 새로 만들어드릴까요? 필요한 정보를 알려주세요!".to_string()
+                    );
+                } else {
+                    let listing: Vec<String> = results
+                        .iter()
+                        .map(|e| format!("- **{}** ({}): {}", e.name, e.id, e.description))
+                        .collect();
+                    response_parts.push(format!("관련 스킬을 찾았어요:\n{}", listing.join("\n")));
+                }
+            }
+            AssistantAction::RecommendSkill { skill_id, reason } => {
+                if let Some(entry) = ctx.registry_entries.iter().find(|e| e.id == *skill_id) {
+                    response_parts.push(format!(
+                        "이 스킬을 추천해요: **{}** ({})\n{}\n\n설치할까요?",
+                        entry.name, entry.id, reason
+                    ));
+                } else {
+                    response_parts.push(format!(
+                        "스킬 '{skill_id}'을 추천하고 싶었는데, 레지스트리에서 찾을 수 없어요."
+                    ));
+                }
+            }
+            AssistantAction::CreateSkill {
+                description,
+                schedule,
+            } => {
+                if !is_admin_event(ctx.event, ctx.config) {
+                    response_parts.push(
+                        "스킬 생성 권한이 없습니다. admin_chat_ids 설정을 확인해주세요.".into(),
+                    );
+                    actions_taken.push(action.clone());
+                    continue;
+                }
+
+                let chat_id = extract_chat_id(ctx.event);
+                let full_description = if let Some(ref sched) = schedule {
+                    format!("{description} (schedule: {sched})")
+                } else {
+                    description.clone()
+                };
+
+                match teach_loop::handle_teach(
+                    &full_description,
+                    &chat_id,
+                    ctx.provider,
+                    ctx.sandbox,
+                    ctx.config,
+                )
+                .await
+                {
+                    Ok(
+                        ref result @ teach_loop::TeachResult::Generated {
+                            ref skill_name,
+                            ref dry_run_output,
+                            ..
+                        },
+                    ) => match teach_loop::approve_skill(result) {
+                        Ok(()) => {
+                            response_parts.push(format!(
+                                "스킬 **{skill_name}** 생성 완료!\n드라이런 결과: {dry_run_output}"
+                            ));
+                        }
+                        Err(e) => {
+                            response_parts.push(format!("스킬 저장 실패: {e}"));
+                        }
+                    },
+                    Ok(teach_loop::TeachResult::Error(e)) => {
+                        response_parts.push(format!("스킬 생성 실패: {e}"));
+                    }
+                    Err(e) => {
+                        response_parts.push(format!("오류 발생: {e}"));
+                    }
+                }
+            }
+            AssistantAction::SavePreference { key, value } => {
+                let s = ctx.store.lock().await;
+                let _ = s.set_user_context(key, value, "assistant");
+            }
+            AssistantAction::AskQuestion { question, options } => {
+                if options.is_empty() {
+                    response_parts.push(question.clone());
+                } else {
+                    let opts: Vec<String> = options
+                        .iter()
+                        .enumerate()
+                        .map(|(i, o)| format!("{}. {o}", i + 1))
+                        .collect();
+                    response_parts.push(format!("{question}\n{}", opts.join("\n")));
+                }
+            }
+        }
+        actions_taken.push(action.clone());
+    }
+
+    (response_parts, actions_taken)
+}
+
 pub async fn run_assistant_turn(ctx: &AssistantContext<'_>) -> Result<AssistantTurn> {
     let agent_id = format!("assistant-{}", ctx.event.session_id());
 
@@ -175,120 +288,10 @@ pub async fn run_assistant_turn(ctx: &AssistantContext<'_>) -> Result<AssistantT
 
     tracing::info!(phase = ?LoopPhase::Generate, agent_id = %agent_id, response_len = raw_response.len(), "llm response received");
 
-    // Parse actions from response
     let actions = parse_actions(&raw_response);
     tracing::info!(phase = ?LoopPhase::Execute, agent_id = %agent_id, action_count = actions.len(), "actions parsed");
-    let mut response_parts: Vec<String> = Vec::new();
-    let mut actions_taken: Vec<AssistantAction> = Vec::new();
 
-    for action in &actions {
-        match action {
-            AssistantAction::Reply { text } => {
-                response_parts.push(text.clone());
-                actions_taken.push(action.clone());
-            }
-            AssistantAction::SearchRegistry { query } => {
-                let results = search_entries(ctx.registry_entries, query);
-                if results.is_empty() {
-                    response_parts.push(
-                        "아직 스킬 레지스트리에 맞는 스킬이 없어요. 새로 만들어드릴까요? 필요한 정보를 알려주세요!".to_string()
-                    );
-                } else {
-                    let listing: Vec<String> = results
-                        .iter()
-                        .map(|e| format!("- **{}** ({}): {}", e.name, e.id, e.description))
-                        .collect();
-                    response_parts.push(format!("관련 스킬을 찾았어요:\n{}", listing.join("\n")));
-                }
-                actions_taken.push(action.clone());
-            }
-            AssistantAction::RecommendSkill { skill_id, reason } => {
-                if let Some(entry) = ctx.registry_entries.iter().find(|e| e.id == *skill_id) {
-                    response_parts.push(format!(
-                        "이 스킬을 추천해요: **{}** ({})\n{}\n\n설치할까요?",
-                        entry.name, entry.id, reason
-                    ));
-                } else {
-                    response_parts.push(format!(
-                        "스킬 '{skill_id}'을 추천하고 싶었는데, 레지스트리에서 찾을 수 없어요."
-                    ));
-                }
-                actions_taken.push(action.clone());
-            }
-            AssistantAction::CreateSkill {
-                description,
-                schedule,
-            } => {
-                // Admin check for skill creation
-                if !is_admin_event(ctx.event, ctx.config) {
-                    response_parts.push(
-                        "스킬 생성 권한이 없습니다. admin_chat_ids 설정을 확인해주세요.".into(),
-                    );
-                    actions_taken.push(action.clone());
-                    continue;
-                }
-
-                let chat_id = extract_chat_id(ctx.event);
-                let full_description = if let Some(ref sched) = schedule {
-                    format!("{description} (schedule: {sched})")
-                } else {
-                    description.clone()
-                };
-
-                match teach_loop::handle_teach(
-                    &full_description,
-                    &chat_id,
-                    ctx.provider,
-                    ctx.sandbox,
-                    ctx.config,
-                )
-                .await
-                {
-                    Ok(
-                        ref result @ teach_loop::TeachResult::Generated {
-                            ref skill_name,
-                            ref dry_run_output,
-                            ..
-                        },
-                    ) => match teach_loop::approve_skill(result) {
-                        Ok(()) => {
-                            response_parts.push(format!(
-                                "스킬 **{skill_name}** 생성 완료!\n드라이런 결과: {dry_run_output}"
-                            ));
-                        }
-                        Err(e) => {
-                            response_parts.push(format!("스킬 저장 실패: {e}"));
-                        }
-                    },
-                    Ok(teach_loop::TeachResult::Error(e)) => {
-                        response_parts.push(format!("스킬 생성 실패: {e}"));
-                    }
-                    Err(e) => {
-                        response_parts.push(format!("오류 발생: {e}"));
-                    }
-                }
-                actions_taken.push(action.clone());
-            }
-            AssistantAction::SavePreference { key, value } => {
-                let s = ctx.store.lock().await;
-                let _ = s.set_user_context(key, value, "assistant");
-                actions_taken.push(action.clone());
-            }
-            AssistantAction::AskQuestion { question, options } => {
-                if options.is_empty() {
-                    response_parts.push(question.clone());
-                } else {
-                    let opts: Vec<String> = options
-                        .iter()
-                        .enumerate()
-                        .map(|(i, o)| format!("{}. {o}", i + 1))
-                        .collect();
-                    response_parts.push(format!("{question}\n{}", opts.join("\n")));
-                }
-                actions_taken.push(action.clone());
-            }
-        }
-    }
+    let (response_parts, actions_taken) = execute_actions(&actions, ctx).await;
 
     let response_text = if response_parts.is_empty() {
         raw_response.clone()

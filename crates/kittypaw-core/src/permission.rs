@@ -31,9 +31,8 @@ pub struct FilePermissionRule {
     pub can_delete: bool,
 }
 
-/// TODO(v2): Wire into execute_http/execute_web for domain-level permission checks.
 /// A network permission rule scoped to a workspace.
-#[allow(dead_code)]
+/// Note: CRUD via Store is implemented; runtime enforcement in execute_http/execute_web is planned for v2.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkPermissionRule {
     pub id: String,
