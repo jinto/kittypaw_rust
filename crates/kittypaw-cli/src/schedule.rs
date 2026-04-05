@@ -455,6 +455,65 @@ fn handle_run_success(
     }
 }
 
+/// Attempt to auto-fix a broken skill using LLM code generation.
+/// Returns Some(fix_summary) on success, None on failure or skip.
+async fn attempt_auto_fix(
+    skill_id: &str,
+    error_msg: &str,
+    config: &kittypaw_core::config::Config,
+    sandbox: &kittypaw_sandbox::sandbox::Sandbox,
+) -> Option<String> {
+    // Only in Full autonomy mode
+    if config.autonomy_level != kittypaw_core::config::AutonomyLevel::Full {
+        return None;
+    }
+
+    // Load current skill code
+    let (_skill, current_code) = match kittypaw_core::skill::load_skill(skill_id) {
+        Ok(Some(pair)) => pair,
+        _ => return None,
+    };
+
+    // Build a provider from config for the LLM call
+    let registry =
+        kittypaw_llm::registry::LlmRegistry::from_configs(if !config.models.is_empty() {
+            &config.models
+        } else {
+            &[]
+        });
+    let provider = match registry.default_provider() {
+        Some(p) => p,
+        None => return None,
+    };
+
+    // Generate fix via teach_loop
+    let fix_prompt = format!(
+        "Fix this KittyPaw skill that failed with error: {}\n\nSkill name: {}\n\nCurrent code:\n```javascript\n{}\n```\n\nWrite the corrected code. Keep the same logic, only fix the error.",
+        error_msg, skill_id, current_code
+    );
+
+    match crate::teach_loop::handle_teach(&fix_prompt, "auto-fix", &*provider, sandbox, config)
+        .await
+    {
+        Ok(ref result @ crate::teach_loop::TeachResult::Generated { ref skill_name, .. }) => {
+            match crate::teach_loop::approve_skill(result) {
+                Ok(()) => {
+                    tracing::info!("Auto-fix applied for skill '{skill_id}'");
+                    Some(format!("Skill '{}' auto-fixed", skill_name))
+                }
+                Err(e) => {
+                    tracing::warn!("Auto-fix save failed for '{skill_id}': {e}");
+                    None
+                }
+            }
+        }
+        _ => {
+            tracing::warn!("Auto-fix generation failed for '{skill_id}'");
+            None
+        }
+    }
+}
+
 /// Execute a single scheduled skill and handle the result.
 async fn execute_scheduled_skill(
     skill: &Skill,
@@ -578,6 +637,33 @@ async fn execute_scheduled_skill(
                     true,
                     None,
                 );
+                // Auto-fix: attempt on 2nd failure if not already tried
+                let failures = get_failure_count(db_path, &skill.name);
+                let hint = store
+                    .get_user_context(&format!("failure_hint:{}", skill.name))
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default();
+                if failures == 2 && !hint.contains("|auto_fix_attempted") {
+                    if let Some(fix_msg) =
+                        attempt_auto_fix(&skill.name, &error_msg, config, sandbox).await
+                    {
+                        reset_failure_count(db_path, &skill.name).ok();
+                        let _ = store.set_user_context(
+                            &format!("failure_hint:{}", skill.name),
+                            "",
+                            "auto_fixed",
+                        );
+                        notifier.notify_recovery(&skill.name);
+                        tracing::info!("Auto-fix succeeded: {fix_msg}");
+                    } else {
+                        let _ = store.set_user_context(
+                            &format!("failure_hint:{}", skill.name),
+                            &format!("{hint}|auto_fix_attempted"),
+                            "auto",
+                        );
+                    }
+                }
             }
         }
         Err(e) => {
