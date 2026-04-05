@@ -189,6 +189,9 @@
 - [ ] AI 비서 프리셋 (캐릭터 + 말투 + 배경지식)
 - [ ] 자율 최적화 루프 (`kittypaw optimize`)
 - [x] 한국 특화 스킬 5개 (미세먼지, 배송조회, 로또, 뉴스요약, 주식알림)
+- [x] 콘텐츠 파이프라인: trend-scanner → content-drafter 체인 (첫 [[chain]] 활용 사례)
+- [x] 자율성 레벨: AutonomyLevel (readonly/supervised/full) + execute_single_call 게이트
+- [x] 디바이스 페어링: paired_chat_ids + /pair 명령
 - [ ] /daily 모닝 브리핑 (Todoist + Calendar)
 
 ---

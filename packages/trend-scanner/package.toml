@@ -1,0 +1,39 @@
+[package]
+id = "trend-scanner"
+name = "트렌드 스캐너"
+version = "1.0.0"
+description = "Hacker News와 뉴스 소스에서 트렌딩 토픽을 추출하고 분석합니다. content-drafter와 체이닝하여 콘텐츠 파이프라인을 구성합니다."
+author = "KittyPaw Team"
+category = "content"
+tags = ["trend", "news", "content", "pipeline", "chain"]
+
+[trigger]
+type = "schedule"
+cron = "0 8 * * *"
+
+[permissions]
+primitives = ["Http", "Llm", "Storage", "Telegram"]
+allowed_hosts = ["hn.algolia.com"]
+
+[[config.fields]]
+key = "chat_id"
+label = "텔레그램 채팅 ID"
+type = "string"
+required = true
+
+[[config.fields]]
+key = "keywords"
+label = "관심 키워드 (쉼표 구분)"
+type = "string"
+required = false
+default = "AI,startup,open-source"
+
+[[config.fields]]
+key = "schedule"
+label = "Cron Schedule"
+type = "cron"
+required = false
+default = "0 8 * * *"
+
+[[chain]]
+package = "content-drafter"

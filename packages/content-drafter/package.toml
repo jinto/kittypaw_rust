@@ -1,0 +1,37 @@
+[package]
+id = "content-drafter"
+name = "콘텐츠 초안 생성기"
+version = "1.0.0"
+description = "트렌드 분석 결과를 받아 소셜 미디어 포스트 초안(트윗, LinkedIn, 뉴스레터)을 생성합니다. trend-scanner의 체인 스텝으로 자동 실행되거나 독립 실행 가능."
+author = "KittyPaw Team"
+category = "content"
+tags = ["content", "social", "draft", "pipeline", "chain"]
+
+[trigger]
+type = "schedule"
+cron = "0 9 * * *"
+
+[permissions]
+primitives = ["Llm", "Storage", "Telegram"]
+allowed_hosts = []
+
+[[config.fields]]
+key = "chat_id"
+label = "텔레그램 채팅 ID"
+type = "string"
+required = true
+
+[[config.fields]]
+key = "tone"
+label = "톤앤매너"
+type = "string"
+required = false
+default = "professional"
+setup_guide = "예: professional, casual, witty, technical"
+
+[[config.fields]]
+key = "schedule"
+label = "Cron Schedule"
+type = "cron"
+required = false
+default = "0 9 * * *"
