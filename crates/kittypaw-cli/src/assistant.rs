@@ -109,9 +109,12 @@ fn extract_chat_id(event: &Event) -> String {
 }
 
 fn is_admin_event(event: &Event, config: &Config) -> bool {
+    // Desktop/CLI are always admin — it's the local user
+    if matches!(event.event_type, EventType::Desktop) {
+        return true;
+    }
     if config.admin_chat_ids.is_empty() {
-        // Desktop/CLI are always admin, remote channels need explicit config
-        return matches!(event.event_type, EventType::Desktop);
+        return false;
     }
     let chat_id = extract_chat_id(event);
     config.admin_chat_ids.iter().any(|id| id == &chat_id)
