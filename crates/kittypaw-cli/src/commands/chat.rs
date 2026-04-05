@@ -237,17 +237,16 @@ pub(crate) async fn run_stdin() {
 
     // Run agent loop with overall timeout to prevent indefinite blocking
     let timeout_secs = config.sandbox.timeout_secs as u64 * 4; // e.g. 30 * 4 = 120s
-    let loop_future =
-        kittypaw_cli::agent_loop::run_agent_loop(kittypaw_cli::agent_loop::AgentLoopParams {
-            event,
-            provider: &*provider,
-            fallback_provider: fallback.as_deref(),
-            sandbox: &sandbox,
-            store,
-            config: &config,
-            on_token: None,
-            on_permission_request: None,
-        });
+    let session = kittypaw_cli::agent_loop::AgentSession {
+        provider: &*provider,
+        fallback_provider: fallback.as_deref(),
+        sandbox: &sandbox,
+        store,
+        config: &config,
+        on_token: None,
+        on_permission_request: None,
+    };
+    let loop_future = session.run(event);
     match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), loop_future).await {
         Ok(Ok(output)) => {
             println!("{output}");

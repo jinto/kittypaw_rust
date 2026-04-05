@@ -47,6 +47,35 @@ const SYSTEM_PROMPT: &str = r#"You are KittyPaw, an AI agent that helps users by
 
 const MAX_RETRIES: usize = 3;
 
+/// Reusable session that holds provider/sandbox/store/config.
+/// Create once, call `run()` for each event.
+pub struct AgentSession<'a> {
+    pub provider: &'a dyn LlmProvider,
+    pub fallback_provider: Option<&'a dyn LlmProvider>,
+    pub sandbox: &'a Sandbox,
+    pub store: Arc<Mutex<Store>>,
+    pub config: &'a kittypaw_core::config::Config,
+    pub on_token: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    pub on_permission_request: Option<crate::skill_executor::PermissionCallback>,
+}
+
+impl<'a> AgentSession<'a> {
+    pub async fn run(&self, event: Event) -> Result<String> {
+        run_agent_loop_inner(
+            event,
+            self.provider,
+            self.fallback_provider,
+            &self.sandbox,
+            self.store.clone(),
+            self.config,
+            self.on_token.clone(),
+            self.on_permission_request.clone(),
+        )
+        .await
+    }
+}
+
+/// Legacy params struct — kept for backward compatibility.
 pub struct AgentLoopParams<'a> {
     pub event: Event,
     pub provider: &'a dyn LlmProvider,
@@ -69,7 +98,29 @@ pub async fn run_agent_loop(params: AgentLoopParams<'_>) -> Result<String> {
         on_token,
         on_permission_request,
     } = params;
+    run_agent_loop_inner(
+        event,
+        provider,
+        fallback_provider,
+        sandbox,
+        store,
+        config,
+        on_token,
+        on_permission_request,
+    )
+    .await
+}
 
+async fn run_agent_loop_inner(
+    event: Event,
+    provider: &dyn LlmProvider,
+    fallback_provider: Option<&dyn LlmProvider>,
+    sandbox: &Sandbox,
+    store: Arc<Mutex<Store>>,
+    config: &kittypaw_core::config::Config,
+    on_token: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    on_permission_request: Option<crate::skill_executor::PermissionCallback>,
+) -> Result<String> {
     let agent_id = match event.event_type {
         EventType::Telegram => format!("telegram-{}", event.session_id()),
         EventType::WebChat => format!("web-{}", event.session_id()),
