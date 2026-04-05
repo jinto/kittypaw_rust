@@ -21,6 +21,7 @@ pub fn Onboarding(on_complete: EventHandler) -> Element {
     match step() {
         1 => rsx! { StepWelcome { on_next: move |_| step.set(2) } },
         2 => rsx! { StepLlm { on_next: move |_| step.set(3) } },
+        3 => rsx! { StepTelegram { on_next: move |_| step.set(4) } },
         _ => rsx! { StepComplete { on_complete } },
     }
 }
@@ -283,7 +284,113 @@ fn StepLlm(on_next: EventHandler) -> Element {
     }
 }
 
-// ── Step 3: Complete ──────────────────────────────────────────────────────────
+// ── Step 3: Telegram ─────────────────────────────────────────────────────────
+
+#[component]
+fn StepTelegram(on_next: EventHandler) -> Element {
+    let mut want_telegram = use_signal(|| false);
+    let mut bot_token = use_signal(String::new);
+    let mut chat_id = use_signal(String::new);
+    let mut saved = use_signal(|| false);
+
+    rsx! {
+        div {
+            style: "position: fixed; inset: 0; background: #F5F3F0; display: flex; align-items: center; justify-content: center; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;",
+
+            div {
+                style: "background: #FFFFFF; border: 1px solid #E7E5E4; border-radius: 14px; padding: 48px 56px; max-width: 520px; width: 100%; box-shadow: 0 4px 24px rgba(0,0,0,0.06);",
+
+                // Header
+                div { style: "text-align: center; margin-bottom: 32px;",
+                    div { style: "font-size: 40px; margin-bottom: 12px;", "📱" }
+                    h2 {
+                        style: "font-family: 'Fraunces', Georgia, serif; font-size: 26px; font-weight: 700; color: #1C1917; margin: 0 0 8px 0;",
+                        "텔레그램을 연결할까요?"
+                    }
+                    p {
+                        style: "font-size: 14px; color: #78716C; margin: 0; line-height: 1.5;",
+                        "스킬 실행 결과를 텔레그램으로 받아보세요"
+                    }
+                }
+
+                if !want_telegram() {
+                    // Choice buttons
+                    div { style: "display: flex; flex-direction: column; gap: 12px;",
+                        button {
+                            style: "padding: 16px 20px; background: #F5F3F0; border: 1px solid #E7E5E4; border-radius: 10px; cursor: pointer; text-align: left; font-size: 14px; color: #1C1917;",
+                            onclick: move |_| want_telegram.set(true),
+                            div { style: "font-weight: 600; margin-bottom: 4px;", "네, 연결할게요" }
+                            div { style: "font-size: 12px; color: #78716C;", "BotFather에서 봇을 만들고 토큰을 입력합니다" }
+                        }
+                        button {
+                            style: "padding: 16px 20px; background: #F5F3F0; border: 1px solid #E7E5E4; border-radius: 10px; cursor: pointer; text-align: left; font-size: 14px; color: #78716C;",
+                            onclick: move |_| on_next.call(()),
+                            div { style: "font-weight: 600; margin-bottom: 4px;", "나중에 할게요" }
+                            div { style: "font-size: 12px;", "설정에서 언제든 연결할 수 있어요" }
+                        }
+                    }
+                } else {
+                    // Telegram setup guide
+                    div {
+                        style: "background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 8px; padding: 16px; margin-bottom: 20px; font-size: 13px; color: #92400E; line-height: 1.6;",
+                        div { style: "font-weight: 600; margin-bottom: 8px;", "텔레그램 봇 만들기" }
+                        ol { style: "margin: 0; padding-left: 20px;",
+                            li { "텔레그램에서 " strong { "@BotFather" } " 검색" }
+                            li { strong { "/newbot" } " 입력 → 봇 이름 설정" }
+                            li { "발급된 토큰 복사 (아래에 붙여넣기)" }
+                            li { "만든 봇에게 아무 메시지 전송" }
+                            li { "봇 토큰으로 getUpdates API 호출하여 chat_id 확인" }
+                        }
+                    }
+
+                    div { style: "display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px;",
+                        div {
+                            label { style: "font-size: 12px; font-weight: 600; color: #78716C; display: block; margin-bottom: 4px;", "봇 토큰" }
+                            input {
+                                style: "width: 100%; padding: 10px 12px; border: 1px solid #E7E5E4; border-radius: 6px; font-size: 13px; font-family: monospace; outline: none; box-sizing: border-box;",
+                                placeholder: "1234567890:ABCdefGHIjklMNOpqrSTUvwxYZ",
+                                value: "{bot_token}",
+                                oninput: move |e| bot_token.set(e.value()),
+                            }
+                        }
+                        div {
+                            label { style: "font-size: 12px; font-weight: 600; color: #78716C; display: block; margin-bottom: 4px;", "채팅 ID" }
+                            input {
+                                style: "width: 100%; padding: 10px 12px; border: 1px solid #E7E5E4; border-radius: 6px; font-size: 13px; font-family: monospace; outline: none; box-sizing: border-box;",
+                                placeholder: "-100123456789",
+                                value: "{chat_id}",
+                                oninput: move |e| chat_id.set(e.value()),
+                            }
+                        }
+                    }
+
+                    div { style: "display: flex; justify-content: flex-end; gap: 8px;",
+                        button {
+                            style: "padding: 10px 20px; background: transparent; color: #78716C; border: 1px solid #E7E5E4; border-radius: 6px; font-size: 13px; cursor: pointer;",
+                            onclick: move |_| on_next.call(()),
+                            "건너뛰기"
+                        }
+                        button {
+                            style: "padding: 10px 24px; background: #1C1917; color: #F5F3F0; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer;",
+                            disabled: bot_token.read().is_empty() || chat_id.read().is_empty(),
+                            onclick: move |_| {
+                                let token = bot_token.read().clone();
+                                let cid = chat_id.read().clone();
+                                let _ = kittypaw_core::secrets::set_secret("telegram", "bot_token", &token);
+                                let _ = kittypaw_core::secrets::set_secret("telegram", "chat_id", &cid);
+                                saved.set(true);
+                                on_next.call(());
+                            },
+                            if *saved.read() { "저장 완료" } else { "저장 후 다음" }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Step 4: Complete ──────────────────────────────────────────────────────────
 
 #[component]
 fn StepComplete(on_complete: EventHandler) -> Element {
