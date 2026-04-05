@@ -211,44 +211,21 @@ fn parse_skill_md(path: &Path) -> Result<Option<(Skill, String)>> {
         return Ok(None);
     };
 
-    if name.is_empty() {
-        // Derive name from directory
-        let dir_name = path
-            .parent()
+    // Derive name from directory if not in frontmatter
+    let name = if name.is_empty() {
+        path.parent()
             .and_then(|p| p.file_name())
             .and_then(|n| n.to_str())
-            .unwrap_or("unknown");
-        let name = dir_name.to_string();
-        let skill = Skill {
-            name: name.clone(),
-            version: 1,
-            description: if description.is_empty() {
-                format!("Skill from {}", dir_name)
-            } else {
-                description
-            },
-            created_at: String::new(),
-            updated_at: String::new(),
-            enabled: true,
-            trigger: SkillTrigger {
-                trigger_type: "message".into(),
-                cron: None,
-                natural: None,
-                keyword: Some(name),
-            },
-            permissions: SkillPermissions {
-                primitives: vec![
-                    "Http".into(),
-                    "Llm".into(),
-                    "Storage".into(),
-                    "Telegram".into(),
-                ],
-                allowed_hosts: vec![],
-            },
-            format: SkillFormat::SkillMd,
-        };
-        return Ok(Some((skill, body)));
-    }
+            .unwrap_or("unknown")
+            .to_string()
+    } else {
+        name
+    };
+    let description = if description.is_empty() {
+        format!("Skill from {}", name)
+    } else {
+        description
+    };
 
     let skill = Skill {
         name: name.clone(),

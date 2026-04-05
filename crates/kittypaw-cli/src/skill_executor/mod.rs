@@ -401,53 +401,52 @@ async fn execute_single_call(
         "executing skill call"
     );
 
-    // Autonomy level: block write operations in ReadOnly mode
-    if config.autonomy_level == kittypaw_core::config::AutonomyLevel::Readonly
-        && !is_read_only_skill_call(call)
-    {
-        return SkillResult {
-            skill_name: call.skill_name.clone(),
-            method: call.method.clone(),
-            success: false,
-            result: serde_json::Value::Null,
-            error: Some(format!(
-                "Blocked by ReadOnly mode: {}.{}",
-                call.skill_name, call.method
-            )),
-        };
-    }
-
-    // Supervised mode: require permission for write operations
-    if config.autonomy_level == kittypaw_core::config::AutonomyLevel::Supervised
-        && !is_read_only_skill_call(call)
-    {
-        if let Some(cb) = on_permission {
-            let request = kittypaw_core::permission::PermissionRequest {
-                request_id: uuid_v4(),
-                resource_kind: kittypaw_core::permission::ResourceKind::File,
-                resource_path: format!("{}.{}", call.skill_name, call.method),
-                action: "execute".to_string(),
-                workspace_id: String::new(),
-            };
-            let rx = cb(request);
-            match rx.await {
-                Ok(
-                    kittypaw_core::permission::PermissionDecision::AllowOnce
-                    | kittypaw_core::permission::PermissionDecision::AllowPermanent,
-                ) => {}
-                _ => {
-                    return SkillResult {
-                        skill_name: call.skill_name.clone(),
-                        method: call.method.clone(),
-                        success: false,
-                        result: serde_json::Value::Null,
-                        error: Some(format!(
-                            "Denied by Supervised mode: {}.{}",
-                            call.skill_name, call.method
-                        )),
+    // Autonomy level gate: check once, branch by level
+    if !is_read_only_skill_call(call) {
+        match config.autonomy_level {
+            kittypaw_core::config::AutonomyLevel::Readonly => {
+                return SkillResult {
+                    skill_name: call.skill_name.clone(),
+                    method: call.method.clone(),
+                    success: false,
+                    result: serde_json::Value::Null,
+                    error: Some(format!(
+                        "Blocked by ReadOnly mode: {}.{}",
+                        call.skill_name, call.method
+                    )),
+                };
+            }
+            kittypaw_core::config::AutonomyLevel::Supervised => {
+                if let Some(cb) = on_permission {
+                    let request = kittypaw_core::permission::PermissionRequest {
+                        request_id: uuid_v4(),
+                        resource_kind: kittypaw_core::permission::ResourceKind::File,
+                        resource_path: format!("{}.{}", call.skill_name, call.method),
+                        action: "execute".to_string(),
+                        workspace_id: String::new(),
                     };
+                    let rx = cb(request);
+                    match rx.await {
+                        Ok(
+                            kittypaw_core::permission::PermissionDecision::AllowOnce
+                            | kittypaw_core::permission::PermissionDecision::AllowPermanent,
+                        ) => {}
+                        _ => {
+                            return SkillResult {
+                                skill_name: call.skill_name.clone(),
+                                method: call.method.clone(),
+                                success: false,
+                                result: serde_json::Value::Null,
+                                error: Some(format!(
+                                    "Denied by Supervised mode: {}.{}",
+                                    call.skill_name, call.method
+                                )),
+                            };
+                        }
+                    }
                 }
             }
+            kittypaw_core::config::AutonomyLevel::Full => {}
         }
     }
 

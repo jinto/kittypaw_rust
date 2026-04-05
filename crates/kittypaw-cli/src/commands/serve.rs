@@ -397,7 +397,6 @@ pub(crate) async fn run_serve(bind_addr: &str) {
                         if let Some((skill, code_or_prompt)) = found_skill {
                             // SKILL.md format: use LLM to generate JS from the prompt
                             let js_code = if skill.format == kittypaw_core::skill::SkillFormat::SkillMd {
-                                let provider = super::helpers::require_provider(&config);
                                 let messages = vec![
                                     kittypaw_core::types::LlmMessage {
                                         role: kittypaw_core::types::Role::System,

@@ -474,13 +474,34 @@ async fn attempt_auto_fix(
         _ => return None,
     };
 
-    // Build a provider from config for the LLM call
-    let registry =
-        kittypaw_llm::registry::LlmRegistry::from_configs(if !config.models.is_empty() {
-            &config.models
-        } else {
-            &[]
-        });
+    // Build a provider (handles legacy [llm] section + [[models]])
+    let registry = if !config.models.is_empty() {
+        let mut models = config.models.clone();
+        if !config.llm.api_key.is_empty() {
+            for model in &mut models {
+                if model.api_key.is_empty()
+                    && matches!(model.provider.as_str(), "claude" | "anthropic" | "openai")
+                {
+                    model.api_key = config.llm.api_key.clone();
+                }
+            }
+        }
+        kittypaw_llm::registry::LlmRegistry::from_configs(&models)
+    } else if !config.llm.api_key.is_empty() {
+        let legacy = kittypaw_core::config::ModelConfig {
+            name: config.llm.provider.clone(),
+            provider: config.llm.provider.clone(),
+            model: config.llm.model.clone(),
+            api_key: config.llm.api_key.clone(),
+            max_tokens: config.llm.max_tokens,
+            default: true,
+            base_url: None,
+            context_window: None,
+        };
+        kittypaw_llm::registry::LlmRegistry::from_configs(&[legacy])
+    } else {
+        kittypaw_llm::registry::LlmRegistry::new()
+    };
     let provider = match registry.default_provider() {
         Some(p) => p,
         None => return None,

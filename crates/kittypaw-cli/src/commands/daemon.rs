@@ -2,16 +2,26 @@ use std::path::PathBuf;
 
 const PLIST_LABEL: &str = "com.kittypaw.daemon";
 
+fn home_dir() -> PathBuf {
+    std::env::var("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            kittypaw_core::secrets::data_dir()
+                .unwrap_or_else(|_| PathBuf::from(".kittypaw"))
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .to_path_buf()
+        })
+}
+
 fn plist_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    PathBuf::from(home)
+    home_dir()
         .join("Library/LaunchAgents")
         .join(format!("{PLIST_LABEL}.plist"))
 }
 
 fn kittypaw_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    PathBuf::from(home).join(".kittypaw")
+    kittypaw_core::secrets::data_dir().unwrap_or_else(|_| PathBuf::from(".kittypaw"))
 }
 
 pub(crate) fn run_daemon_install() {
