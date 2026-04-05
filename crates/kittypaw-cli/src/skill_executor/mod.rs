@@ -514,11 +514,21 @@ fn resolve_channel_token(
     secret_key: &str,
     env_var: &str,
 ) -> Option<String> {
+    let result = // 1. secrets: channels/{secret_key} (Settings UI)
     kittypaw_core::secrets::get_secret("channels", secret_key)
         .ok()
         .flatten()
         .filter(|s| !s.is_empty())
+        // 2. secrets: {channel_type}/bot_token (onboarding)
+        .or_else(|| {
+            kittypaw_core::secrets::get_secret(channel_type, "bot_token")
+                .ok()
+                .flatten()
+                .filter(|s| !s.is_empty())
+        })
+        // 3. environment variable
         .or_else(|| std::env::var(env_var).ok().filter(|s| !s.is_empty()))
+        // 4. config.channels[*]
         .or_else(|| {
             config
                 .channels
@@ -526,7 +536,16 @@ fn resolve_channel_token(
                 .find(|c| c.channel_type == channel_type)
                 .map(|c| c.token.clone())
                 .filter(|s| !s.is_empty())
-        })
+        });
+    if result.is_none() {
+        tracing::warn!(
+            channel = channel_type,
+            "Channel token not found in secrets, env, or config"
+        );
+    } else {
+        tracing::debug!(channel = channel_type, "Channel token resolved");
+    }
+    result
 }
 
 #[cfg(test)]
