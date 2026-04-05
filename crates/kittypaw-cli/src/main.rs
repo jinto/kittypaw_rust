@@ -60,6 +60,11 @@ enum Commands {
         #[arg(short, long, default_value = "10")]
         limit: usize,
     },
+    /// Background daemon management (macOS LaunchAgent)
+    Daemon {
+        #[command(subcommand)]
+        command: DaemonCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -98,6 +103,16 @@ enum ConfigCommands {
 enum AgentCommands {
     /// List configured agents with their skills
     List,
+}
+
+#[derive(Subcommand)]
+enum DaemonCommands {
+    /// Install as macOS LaunchAgent (auto-start on login)
+    Install,
+    /// Uninstall the LaunchAgent
+    Uninstall,
+    /// Check daemon status
+    Status,
 }
 
 #[tokio::main]
@@ -160,6 +175,11 @@ async fn main() {
         Some(Commands::Log { skill, limit }) => {
             commands::chat::run_log(skill, limit).await;
         }
+        Some(Commands::Daemon { command }) => match command {
+            DaemonCommands::Install => commands::daemon::run_daemon_install(),
+            DaemonCommands::Uninstall => commands::daemon::run_daemon_uninstall(),
+            DaemonCommands::Status => commands::daemon::run_daemon_status(),
+        },
         None => {
             commands::chat::run_stdin().await;
         }
