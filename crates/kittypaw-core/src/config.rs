@@ -4,6 +4,25 @@ use std::path::PathBuf;
 
 use crate::error::{KittypawError, Result};
 
+/// Controls what skill operations are allowed at runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AutonomyLevel {
+    /// Only read operations (Http.get, Storage.get, File.read, etc.)
+    #[serde(alias = "read_only")]
+    Readonly,
+    /// Write operations require user confirmation via permission callback
+    Supervised,
+    /// All operations allowed (default)
+    Full,
+}
+
+impl Default for AutonomyLevel {
+    fn default() -> Self {
+        Self::Full
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub llm: LlmConfig,
@@ -24,6 +43,12 @@ pub struct Config {
     pub features: FeatureFlags,
     #[serde(default)]
     pub mcp_servers: Vec<McpServerConfig>,
+    /// Autonomy level: "readonly", "supervised", or "full" (default)
+    #[serde(default)]
+    pub autonomy_level: AutonomyLevel,
+    /// Allowed Telegram chat IDs. Empty = allow all (no pairing).
+    #[serde(default)]
+    pub paired_chat_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -284,6 +309,8 @@ impl Default for Config {
             stt: SttConfig::default(),
             features: FeatureFlags::default(),
             mcp_servers: vec![],
+            autonomy_level: AutonomyLevel::default(),
+            paired_chat_ids: vec![],
         }
     }
 }
