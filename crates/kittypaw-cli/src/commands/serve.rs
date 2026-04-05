@@ -198,12 +198,32 @@ pub(crate) async fn run_serve(bind_addr: &str) {
                 if event.event_type == EventType::Telegram {
                     let text = raw_event_text.trim();
 
+                    // Device pairing: reject messages from unpaired chat IDs
+                    if !config.paired_chat_ids.is_empty()
+                        && !config.paired_chat_ids.iter().any(|id| id == &session_id)
+                    {
+                        if text.starts_with("/pair ") {
+                            let code = text.strip_prefix("/pair ").unwrap().trim();
+                            let expected = std::env::var("KITTYPAW_PAIR_CODE").unwrap_or_default();
+                            if !expected.is_empty() && code == expected {
+                                tracing::info!("Pairing accepted for chat_id={session_id}");
+                                send_telegram_message(&config, &session_id, "✅ 페어링 성공! paired_chat_ids에 이 ID를 추가하세요.").await;
+                            } else {
+                                send_telegram_message(&config, &session_id, "❌ 페어링 코드가 올바르지 않습니다.").await;
+                            }
+                        } else {
+                            tracing::warn!("Rejected message from unpaired chat_id={session_id}");
+                        }
+                        continue;
+                    }
+
                     // /help, /start — show available commands
                     if text == "/help" || text == "/start" {
                         let help = "KittyPaw 명령어:\n\n\
                             /run <스킬이름> — 스킬 즉시 실행\n\
                             /status — 오늘 실행 통계\n\
                             /teach <설명> — 새 스킬 가르치기\n\
+                            /pair <코드> — 디바이스 페어링\n\
                             /help — 도움말";
                         send_telegram_message(&config, &session_id, help).await;
                         continue;
