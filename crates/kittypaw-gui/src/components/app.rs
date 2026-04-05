@@ -47,7 +47,7 @@ pub fn App() -> Element {
             }
         } else {
             div { class: "app",
-                style: "display: flex; height: 100vh; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; overflow: hidden; position: fixed; top: 0; left: 0; right: 0; bottom: 0;",
+                style: "display: flex; height: 100vh; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; overflow: hidden;",
 
                 sidebar::Sidebar {
                     active_tab: active_tab(),

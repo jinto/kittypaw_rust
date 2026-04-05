@@ -100,7 +100,15 @@ fn main() {
 
     let app_state = AppState::new(store, persisted_key, packages_dir, llm_registry);
 
+    let window = dioxus::desktop::WindowBuilder::new()
+        .with_title("KittyPaw")
+        .with_inner_size(dioxus::desktop::tao::dpi::LogicalSize::new(1024.0, 720.0))
+        .with_min_inner_size(dioxus::desktop::tao::dpi::LogicalSize::new(800.0, 500.0));
+
+    let cfg = dioxus::desktop::Config::new().with_window(window);
+
     dioxus::LaunchBuilder::desktop()
+        .with_cfg(cfg)
         .with_context(app_state)
         .launch(components::app::App);
 }

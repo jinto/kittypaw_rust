@@ -1,0 +1,12 @@
+[application]
+name = "KittyPaw"
+default_platform = "desktop"
+
+[bundle]
+identifier = "com.kittypaw.app"
+publisher = "KittyPaw"
+
+[bundle.macos]
+minimum_system_version = "12.0"
+files = {}
+hardened_runtime = false
