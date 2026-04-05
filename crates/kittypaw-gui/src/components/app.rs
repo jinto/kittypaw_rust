@@ -84,6 +84,7 @@ pub fn App() -> Element {
                 sidebar::Sidebar {
                     active_tab: active_tab(),
                     on_tab_change: move |tab: String| active_tab.set(tab),
+                    on_reset_onboarding: move |_| onboarding_done.set(false),
                 }
 
                 div { class: "main",

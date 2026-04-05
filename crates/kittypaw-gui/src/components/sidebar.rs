@@ -3,7 +3,11 @@ use dioxus::prelude::*;
 use crate::i18n::I18n;
 
 #[component]
-pub fn Sidebar(active_tab: String, on_tab_change: EventHandler<String>) -> Element {
+pub fn Sidebar(
+    active_tab: String,
+    on_tab_change: EventHandler<String>,
+    on_reset_onboarding: EventHandler,
+) -> Element {
     let i18n = use_context::<Signal<I18n>>();
     let t = |key: &str| i18n.read().t(key).to_string();
 
@@ -60,8 +64,14 @@ pub fn Sidebar(active_tab: String, on_tab_change: EventHandler<String>) -> Eleme
 
             // Footer
             div {
-                style: "color: #57534E; font-size: 11px; padding-top: 4px;",
-                "v0.1.0"
+                style: "display: flex; align-items: center; gap: 8px; padding-top: 4px;",
+                span { style: "color: #57534E; font-size: 11px;", "v0.1.0" }
+                button {
+                    style: "background: none; border: none; color: #57534E; font-size: 10px; cursor: pointer; padding: 2px 6px; border-radius: 4px; opacity: 0.6;",
+                    title: "온보딩 다시하기",
+                    onclick: move |_| on_reset_onboarding.call(()),
+                    "설정 위자드"
+                }
             }
         }
     }
