@@ -382,7 +382,7 @@ fn StepTelegram(on_next: EventHandler) -> Element {
                                     onclick: move |_| {
                                         let token = bot_token.read().clone();
                                         spawn(async move {
-                                            match fetch_telegram_chat_id(&token).await {
+                                            match kittypaw_core::telegram::fetch_chat_id(&token).await {
                                                 Ok(id) => chat_id.set(id),
                                                 Err(e) => chat_id.set(format!("오류: {e}")),
                                             }
@@ -460,43 +460,4 @@ fn StepComplete(on_complete: EventHandler) -> Element {
             }
         }
     }
-}
-
-/// Fetch the most recent chat_id from Telegram Bot API getUpdates.
-async fn fetch_telegram_chat_id(token: &str) -> Result<String, String> {
-    let url = format!("https://api.telegram.org/bot{token}/getUpdates?limit=1&offset=-1");
-    let client = reqwest::Client::new();
-    let resp = client
-        .get(&url)
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .map_err(|e| format!("요청 실패: {e}"))?;
-
-    let body: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("응답 파싱 실패: {e}"))?;
-
-    if body["ok"].as_bool() != Some(true) {
-        return Err("봇 토큰이 유효하지 않습니다".into());
-    }
-
-    let results = body["result"]
-        .as_array()
-        .ok_or("결과가 비어있습니다. 봇에게 먼저 메시지를 보내주세요")?;
-    if results.is_empty() {
-        return Err("봇에게 먼저 메시지를 보내주세요".into());
-    }
-
-    for result in results {
-        if let Some(id) = result["message"]["chat"]["id"].as_i64() {
-            return Ok(id.to_string());
-        }
-        if let Some(id) = result["channel_post"]["chat"]["id"].as_i64() {
-            return Ok(id.to_string());
-        }
-    }
-
-    Err("채팅 ID를 찾을 수 없습니다. 봇에게 메시지를 보낸 후 다시 시도하세요".into())
 }

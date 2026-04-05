@@ -8,5 +8,7 @@ pub mod permission;
 pub mod registry;
 pub mod secrets;
 pub mod skill;
+#[cfg(feature = "registry")]
+pub mod telegram;
 pub mod types;
 pub mod workspace;
