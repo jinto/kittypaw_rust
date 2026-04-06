@@ -56,11 +56,14 @@ pub fn ChatPanel() -> Element {
                     on_token: None,
                     on_permission_request: None,
                 };
+                tracing::info!("GUI Chat: running agent_loop for user message");
                 match session.run(event).await {
                     Ok(text) => {
+                        tracing::info!(len = text.len(), "GUI Chat: agent_loop success");
                         messages.write().push(("assistant".into(), text));
                     }
                     Err(e) => {
+                        tracing::error!(error = %e, "GUI Chat: agent_loop error");
                         messages
                             .write()
                             .push(("assistant".into(), format!("Error: {e}")));

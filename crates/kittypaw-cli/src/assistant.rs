@@ -357,7 +357,7 @@ fn build_messages(
         if let Ok(Some(tg_id)) = kittypaw_core::secrets::get_secret("telegram", "chat_id") {
             if !tg_id.is_empty() {
                 channels.push(format!(
-                    "- Telegram: 설정됨 (chat_id: {tg_id}). Telegram.sendMessage(\"{tg_id}\", text) 로 메시지를 보낼 수 있습니다."
+                    "- Telegram: 연결됨 (chat_id: \"{tg_id}\"). 사용자가 텔레그램 관련 요청을 하면 새 스킬을 만들지 말고, 코드에서 바로 await Telegram.sendMessage(\"{tg_id}\", \"메시지 내용\") 을 사용하세요."
                 ));
             }
         }
