@@ -217,6 +217,12 @@
 - [x] GUI Chat → agent_loop 전환 (LLM이 프리미티브 직접 사용, assistant.rs → AgentSession)
 - [x] Desktop/CLI admin 권한 수정 (is_admin_event + teach_loop)
 - [x] Design Principle #6: 하드코딩 금지 (VISION.md에 기록)
+- [x] 온보딩 toml 자동 생성: secrets에서 api_key/telegram 수집 → ~/.kittypaw/kittypaw.toml
+- [x] GUI 텔레그램 폴링 통합: 앱 실행 시 백그라운드 Telegram 폴링 (serve 불필요)
+- [x] 텔레그램 봇 응답: chat_id i64 파싱 + freeform_fallback + 토큰 경로 호환
+- [x] kittypaw.toml 경로: ~/.kittypaw/kittypaw.toml 우선, ./kittypaw.toml fallback
+- [x] 온보딩 작업 폴더 선택 + 텔레그램 BotFather 가이드 + 채팅ID 자동 감지
+- [x] 온보딩 순서: 환영 → LLM → 텔레그램 → 작업폴더 → 완료
 - [ ] /daily 모닝 브리핑 (Todoist + Calendar)
 
 ---
