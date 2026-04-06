@@ -92,7 +92,12 @@ jobs:
 
       - name: Compile Swift mic helper
         run: |
-          swiftc -O -target ${{ matrix.arch == 'arm64' && 'arm64-apple-macosx11.0' || 'x86_64-apple-macosx11.0' }} \
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            TARGET="arm64-apple-macosx11.0"
+          else
+            TARGET="x86_64-apple-macosx11.0"
+          fi
+          swiftc -O -target "$TARGET" \
             -o "$APP_DIR/MacOS/kittypaw-mic" \
             scripts/kittypaw-mic.swift \
             -framework Speech -framework AVFoundation 2>/dev/null || echo "Swift helper skipped"
@@ -100,14 +105,14 @@ jobs:
           APP_DIR: KittyPaw.app/Contents
 
       - name: Sign app
-        if: secrets.DEVELOPER_ID_CERT_BASE64 != ''
+        if: ${{ secrets.DEVELOPER_ID_CERT_BASE64 != '' }}
         run: |
           codesign --force --deep --options runtime \
             -s "Developer ID Application: JAE KWON PARK (QN9P7KSSMU)" \
             KittyPaw.app
 
       - name: Notarize app
-        if: secrets.DEVELOPER_ID_CERT_BASE64 != ''
+        if: ${{ secrets.DEVELOPER_ID_CERT_BASE64 != '' }}
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
