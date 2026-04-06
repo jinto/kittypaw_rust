@@ -283,6 +283,7 @@ pub(crate) async fn run_serve(bind_addr: &str) {
     });
 
     // Event processing loop
+    tracing::info!("Event processing loop started, waiting for events...");
     loop {
         tokio::select! {
             _ = shutdown_rx.changed() => {
@@ -291,7 +292,10 @@ pub(crate) async fn run_serve(bind_addr: &str) {
             }
             maybe_event = event_rx.recv() => {
                 let event = match maybe_event {
-                    Some(e) => e,
+                    Some(e) => {
+                        tracing::info!(event_type = ?e.event_type, "Event received in main loop");
+                        e
+                    },
                     None => break,
                 };
                 // Capture session_id before moving event
@@ -305,9 +309,12 @@ pub(crate) async fn run_serve(bind_addr: &str) {
                     EventType::Telegram => event
                         .payload
                         .get("chat_id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("default")
-                        .to_string(),
+                        .map(|v| {
+                            v.as_str()
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| v.to_string().trim_matches('"').to_string())
+                        })
+                        .unwrap_or_else(|| "default".to_string()),
                     EventType::Desktop => event
                         .payload
                         .get("workspace_id")

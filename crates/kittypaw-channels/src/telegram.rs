@@ -18,7 +18,10 @@ impl TelegramChannel {
     pub fn new(bot_token: impl Into<String>) -> Self {
         Self {
             bot_token: bot_token.into(),
-            client: Client::new(),
+            client: Client::builder()
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+                .unwrap_or_default(),
         }
     }
 
@@ -117,6 +120,9 @@ impl Channel for TelegramChannel {
                             }
 
                             if let Some(updates) = tg_resp.result {
+                                if !updates.is_empty() {
+                                    info!("Telegram: received {} update(s)", updates.len());
+                                }
                                 for update in updates {
                                     offset = update.update_id + 1;
 
