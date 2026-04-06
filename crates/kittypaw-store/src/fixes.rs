@@ -85,8 +85,14 @@ impl Store {
             None => return Ok(false),
         };
 
-        // Load skill and replace code
-        if let Some((skill, _old_js)) = kittypaw_core::skill::load_skill(&fix.skill_id)? {
+        // Load skill and verify code hasn't changed since fix was generated
+        if let Some((skill, current_js)) = kittypaw_core::skill::load_skill(&fix.skill_id)? {
+            if current_js != fix.old_code {
+                return Err(KittypawError::Skill(format!(
+                    "Skill '{}' has been modified since fix was generated. Rejecting stale fix.",
+                    fix.skill_id
+                )));
+            }
             kittypaw_core::skill::save_skill(&skill, &fix.new_code)?;
         } else {
             return Ok(false); // skill no longer exists

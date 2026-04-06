@@ -594,9 +594,22 @@ async fn attempt_auto_fix(
                 // Full mode: apply immediately
                 match crate::teach_loop::approve_skill(result) {
                     Ok(()) => {
-                        let fix_id = store
-                            .record_fix(skill_id, &error_short, &old_code, &new_code, true)
-                            .unwrap_or(0);
+                        let fix_id = match store.record_fix(
+                            skill_id,
+                            &error_short,
+                            &old_code,
+                            &new_code,
+                            true,
+                        ) {
+                            Ok(id) => id,
+                            Err(e) => {
+                                tracing::warn!("Fix applied but recording failed: {e}");
+                                return Some(AutoFixResult {
+                                    fix_id: 0,
+                                    applied: true,
+                                });
+                            }
+                        };
                         tracing::info!("Auto-fix applied for skill '{skill_id}' (fix #{fix_id})");
                         Some(AutoFixResult {
                             fix_id,
@@ -610,9 +623,14 @@ async fn attempt_auto_fix(
                 }
             } else {
                 // Supervised mode: record but don't apply
-                let fix_id = store
-                    .record_fix(skill_id, &error_short, &old_code, &new_code, false)
-                    .unwrap_or(0);
+                let fix_id =
+                    match store.record_fix(skill_id, &error_short, &old_code, &new_code, false) {
+                        Ok(id) => id,
+                        Err(e) => {
+                            tracing::warn!("Fix recording failed for '{skill_id}': {e}");
+                            return None;
+                        }
+                    };
                 tracing::info!(
                     "Auto-fix generated for skill '{skill_id}' (fix #{fix_id}, pending approval)"
                 );
@@ -770,7 +788,15 @@ async fn execute_scheduled_skill(
                                 "",
                                 "auto_fixed",
                             );
-                            notifier.notify_fix_applied(&skill.name, &error_msg, fix_result.fix_id);
+                            if fix_result.fix_id > 0 {
+                                notifier.notify_fix_applied(
+                                    &skill.name,
+                                    &error_msg,
+                                    fix_result.fix_id,
+                                );
+                            } else {
+                                notifier.notify_recovery(&skill.name);
+                            }
                         } else {
                             notifier.notify_fix_pending(&skill.name, &error_msg, fix_result.fix_id);
                             let _ = store.set_user_context(
