@@ -11,14 +11,18 @@ use kittypaw_core::{
 use rusqlite::{params, Connection};
 use rusqlite_migration::{Migrations, M};
 
+mod audit;
+mod checkpoint;
 mod context;
 mod conversation;
 mod execution;
 mod fixes;
 pub mod identity;
+mod memory_provider;
 mod permission;
 mod storage;
 
+pub use checkpoint::Checkpoint;
 pub use context::Suggestion;
 pub use fixes::SkillFix;
 
@@ -37,6 +41,8 @@ fn migrations() -> Migrations<'static> {
         M::up(include_str!("migrations/007_token_usage.sql")),
         M::up(include_str!("migrations/008_user_identities.sql")),
         M::up(include_str!("migrations/009_skill_fixes.sql")),
+        M::up(include_str!("migrations/010_checkpoints.sql")),
+        M::up(include_str!("migrations/011_audit_log.sql")),
     ])
 }
 

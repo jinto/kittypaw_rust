@@ -1,4 +1,5 @@
 use kittypaw_core::error::{KittypawError, Result};
+use kittypaw_core::memory::MemoryProvider;
 use kittypaw_core::types::SkillCall;
 
 pub(super) fn execute_memory(
@@ -7,6 +8,16 @@ pub(super) fn execute_memory(
     profile_name: Option<&str>,
 ) -> Result<serde_json::Value> {
     match call.method.as_str() {
+        "search" => {
+            let query = call
+                .args
+                .first()
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| KittypawError::Skill("Memory.search: query required".into()))?;
+            let limit = call.args.get(1).and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+            let hits = store.memory_search(query, limit)?;
+            Ok(serde_json::json!(hits))
+        }
         "save" => {
             let key = call
                 .args

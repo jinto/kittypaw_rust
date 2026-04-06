@@ -26,6 +26,7 @@ cron = "0.16"
 toml = "0.8"
 rusqlite = { version = "0.32", features = ["bundled"] }
 edge-tts-rust = "0.1"
+regex = "1"
 
 [dev-dependencies]
 tempfile = "3"

@@ -3,5 +3,6 @@ pub mod assistant;
 pub mod compaction;
 pub mod mcp_registry;
 pub mod schedule;
+pub mod security;
 pub mod skill_executor;
 pub mod teach_loop;

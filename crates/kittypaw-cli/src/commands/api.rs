@@ -106,6 +106,15 @@ pub(crate) fn build_api_router(api_key: &str, state: ApiState) -> Option<Router>
             "/api/v1/suggestions/{skill_id}/dismiss",
             post(api_suggestions_dismiss),
         )
+        .route("/api/v1/memory/search", get(api_memory_search))
+        .route(
+            "/api/v1/agents/{id}/checkpoints",
+            get(api_checkpoints_list).post(api_checkpoint_create),
+        )
+        .route(
+            "/api/v1/checkpoints/{id}/rollback",
+            post(api_checkpoint_rollback),
+        )
         .route("/api/v1/users/link", post(api_users_link))
         .route("/api/v1/users/{id}/identities", get(api_users_identities))
         .route(
@@ -459,6 +468,94 @@ async fn api_suggestions_dismiss(
     match s.set_user_context(&key, "1", "user") {
         Ok(()) => Json(json!({"dismissed": true, "skill_id": skill_id})),
         Err(e) => Json(json!({"error": format!("{e}")})),
+    }
+}
+
+// ── Memory search endpoint ────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct MemorySearchParams {
+    q: String,
+    #[serde(default = "default_limit")]
+    limit: usize,
+}
+
+async fn api_memory_search(
+    State(st): State<ApiState>,
+    Query(params): Query<MemorySearchParams>,
+) -> Json<Value> {
+    use kittypaw_core::memory::MemoryProvider;
+    let s = st.store.lock().await;
+    match s.memory_search(&params.q, params.limit) {
+        Ok(hits) => Json(json!(hits)),
+        Err(e) => Json(json!({"error": format!("{e}")})),
+    }
+}
+
+// ── Checkpoint endpoints ──────────────────────────────────────────────
+
+async fn api_checkpoints_list(
+    State(st): State<ApiState>,
+    Path(agent_id): Path<String>,
+) -> Json<Value> {
+    let s = st.store.lock().await;
+    match s.list_checkpoints(&agent_id) {
+        Ok(cps) => {
+            let items: Vec<Value> = cps
+                .iter()
+                .map(|c| {
+                    json!({
+                        "id": c.id,
+                        "label": c.label,
+                        "conv_row_id": c.conv_row_id,
+                        "created_at": c.created_at,
+                    })
+                })
+                .collect();
+            Json(json!(items))
+        }
+        Err(e) => Json(json!({"error": format!("{e}")})),
+    }
+}
+
+#[derive(Deserialize)]
+struct CreateCheckpointRequest {
+    #[serde(default)]
+    label: String,
+}
+
+async fn api_checkpoint_create(
+    State(st): State<ApiState>,
+    Path(agent_id): Path<String>,
+    Json(body): Json<CreateCheckpointRequest>,
+) -> (StatusCode, Json<Value>) {
+    let s = st.store.lock().await;
+    match s.create_checkpoint(&agent_id, &body.label) {
+        Ok(id) => (
+            StatusCode::CREATED,
+            Json(json!({"checkpoint_id": id, "agent_id": agent_id})),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("{e}")})),
+        ),
+    }
+}
+
+async fn api_checkpoint_rollback(
+    State(st): State<ApiState>,
+    Path(id): Path<i64>,
+) -> (StatusCode, Json<Value>) {
+    let s = st.store.lock().await;
+    match s.rollback_to_checkpoint(id) {
+        Ok(deleted) => (
+            StatusCode::OK,
+            Json(json!({"rolled_back": true, "turns_deleted": deleted})),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("{e}")})),
+        ),
     }
 }
 

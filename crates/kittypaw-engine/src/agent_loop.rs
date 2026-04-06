@@ -59,6 +59,7 @@ pub const SYSTEM_PROMPT: &str = r#"You are KittyPaw, an AI agent that helps user
 - Skill.delete(name) — Delete a skill
 - Memory.save(key, value) — Save a fact to persistent memory
 - Memory.recall(query) — Recall memories matching a prefix query (empty = all)
+- Memory.search(query, limit?) — Full-text search across past execution results
 - Memory.user(key, value) — Update user profile (USER.md). Use for persistent preferences.
   Example: Memory.user("interests", "AI, 스타트업")
 - Todo.add(task) — Add a task to the current plan
@@ -283,10 +284,15 @@ async fn run_agent_loop_inner(
             crate::compaction::compaction_for_attempt(attempt)
         };
         // Resolve active profile for this agent
-        let active_profile_override = {
+        let (active_profile_override, memory_context) = {
             let s = store.lock().await;
             let key = format!("active_profile:{}", agent_id);
-            s.get_user_context(&key).ok().flatten()
+            let profile = s.get_user_context(&key).ok().flatten();
+            let mem_ctx = {
+                use kittypaw_core::memory::MemoryProvider;
+                s.memory_context_lines().unwrap_or_default()
+            };
+            (profile, mem_ctx)
         };
         let mut messages = build_prompt(
             &state,
@@ -295,6 +301,7 @@ async fn run_agent_loop_inner(
             config,
             channel_name,
             active_profile_override.as_deref(),
+            &memory_context,
         );
         let reason = TransitionReason::PromptBuilt {
             message_count: messages.len(),
@@ -426,6 +433,17 @@ async fn run_agent_loop_inner(
             Err(e) => return Err(e),
         };
         tracing::debug!("Generated JS ({} chars)", code.len());
+
+        // Security: scan for dangerous code patterns
+        let warnings = crate::security::scan_code(&code);
+        if !warnings.is_empty() {
+            tracing::warn!("Dangerous code patterns detected: {:?}", warnings);
+            crate::security::audit(crate::security::AuditEvent::warn(
+                "dangerous_code",
+                format!("agent={agent_id}: {}", warnings.join("; ")),
+            ));
+        }
+
         let reason = TransitionReason::CodeGenerated {
             code_len: code.len(),
         };
@@ -496,11 +514,15 @@ async fn run_agent_loop_inner(
                 );
             }
 
-            let output = if exec_result.output.is_empty() {
+            let raw_output = if exec_result.output.is_empty() {
                 "(no output)".to_string()
             } else {
                 exec_result.output.clone()
             };
+
+            // Security: mask any leaked secrets in output
+            let known_secrets = crate::security::load_known_secrets();
+            let output = crate::security::mask_secrets(&raw_output, &known_secrets);
 
             let reason = TransitionReason::ExecutionSuccess {
                 output_len: output.len(),
@@ -582,6 +604,7 @@ fn build_prompt(
     app_config: &kittypaw_core::config::Config,
     channel_type: &str,
     active_profile_override: Option<&str>,
+    memory_context: &[String],
 ) -> Vec<LlmMessage> {
     use crate::compaction::{compact_turns, CompactionMode};
 
@@ -623,6 +646,14 @@ fn build_prompt(
                 content: format!("## User Profile (USER.md)\n{}", profile.user_md),
             });
         }
+    }
+
+    // Inject memory context (user facts, recent failures, today's stats)
+    if !memory_context.is_empty() {
+        messages.push(LlmMessage {
+            role: Role::System,
+            content: memory_context.join("\n\n"),
+        });
     }
 
     // Inject connected channel info so LLM can use Telegram/Slack/Discord directly
