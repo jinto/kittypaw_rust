@@ -254,12 +254,17 @@ fn default_rate_limit() -> u32 {
 
 impl Config {
     pub fn load() -> Result<Self> {
-        // Layer 1: Try kittypaw.toml
-        let config_path = PathBuf::from("kittypaw.toml");
+        // Layer 1: Try ~/.kittypaw/kittypaw.toml, then ./kittypaw.toml
+        let home_config = crate::secrets::data_dir()
+            .ok()
+            .map(|d| d.join("kittypaw.toml"));
+        let local_config = PathBuf::from("kittypaw.toml");
+        let config_path = home_config.filter(|p| p.exists()).unwrap_or(local_config);
         let mut config = if config_path.exists() {
             let content = std::fs::read_to_string(&config_path)?;
-            toml::from_str(&content)
-                .map_err(|e| KittypawError::Config(format!("Invalid kittypaw.toml: {e}")))?
+            toml::from_str(&content).map_err(|e| {
+                KittypawError::Config(format!("Invalid {}: {e}", config_path.display()))
+            })?
         } else {
             Config::default()
         };
