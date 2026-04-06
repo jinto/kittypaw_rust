@@ -143,10 +143,29 @@ async fn run_agent_loop_inner(
     on_token: Option<Arc<dyn Fn(String) + Send + Sync>>,
     on_permission_request: Option<crate::skill_executor::PermissionCallback>,
 ) -> Result<String> {
-    let agent_id = match event.event_type {
-        EventType::Telegram => format!("telegram-{}", event.session_id()),
-        EventType::WebChat => format!("web-{}", event.session_id()),
-        EventType::Desktop => format!("desktop-{}", event.session_id()),
+    let channel_name = match event.event_type {
+        EventType::Telegram => "telegram",
+        EventType::WebChat => "web",
+        EventType::Desktop => "desktop",
+    };
+    let channel_user_id = event.session_id();
+
+    // Check if this channel user is linked to a global user identity.
+    // If so, use a shared agent_id for cross-channel context.
+    let agent_id = {
+        let s = store.lock().await;
+        match s.resolve_user(channel_name, &channel_user_id) {
+            Ok(Some(global_id)) => {
+                tracing::info!(
+                    channel = channel_name,
+                    channel_user_id = %channel_user_id,
+                    global_user_id = %global_id,
+                    "Resolved cross-channel identity"
+                );
+                format!("user-{global_id}")
+            }
+            _ => format!("{channel_name}-{channel_user_id}"),
+        }
     };
 
     // Load or create agent state — ensure agent exists in DB before adding turns.
@@ -373,15 +392,13 @@ async fn run_agent_loop_inner(
         });
 
         // None = permissive mode (no agent config matched)
+        // Match by agent_id, or by the originating channel name (works for both
+        // channel-prefixed IDs like "telegram-123" and cross-channel "user-*" IDs).
         let checker: Option<Arc<std::sync::Mutex<CapabilityChecker>>> = {
-            let agent_config = config.agents.iter().find(|a| {
-                a.id == agent_id
-                    || (agent_id.starts_with("telegram-")
-                        && a.channels.iter().any(|c| c == "telegram"))
-                    || (agent_id.starts_with("web-") && a.channels.iter().any(|c| c == "web"))
-                    || (agent_id.starts_with("desktop-")
-                        && a.channels.iter().any(|c| c == "desktop"))
-            });
+            let agent_config = config
+                .agents
+                .iter()
+                .find(|a| a.id == agent_id || a.channels.iter().any(|c| c == channel_name));
             agent_config.map(|ac| {
                 Arc::new(std::sync::Mutex::new(CapabilityChecker::from_agent_config(
                     ac,
@@ -622,6 +639,7 @@ async fn try_handle_command(
              /run <스킬이름> — 스킬 즉시 실행\n\
              /status — 오늘 실행 통계\n\
              /teach <설명> — 새 스킬 가르치기\n\
+             /link <유저ID> — 이 채널을 유저 ID에 연결 (크로스채널 대화 공유)\n\
              /help — 도움말\n\n\
              자연어 메시지를 보내면 AI가 직접 처리합니다."
                 .to_string())),
@@ -655,6 +673,38 @@ async fn try_handle_command(
                     )
                     .await,
                 )
+            }
+
+            _ if trimmed.starts_with("/link ") => {
+                let global_user_id = trimmed.strip_prefix("/link ").unwrap().trim();
+                if global_user_id.is_empty() {
+                    return Some(Ok("Usage: /link <유저ID>".to_string()));
+                }
+                let channel = match event.event_type {
+                    kittypaw_core::types::EventType::Telegram => "telegram",
+                    kittypaw_core::types::EventType::WebChat => "web",
+                    kittypaw_core::types::EventType::Desktop => "desktop",
+                };
+                let channel_user_id = event.session_id();
+
+                // Only admin users (or anyone if admin list is empty) can link identities.
+                if !config.admin_chat_ids.is_empty()
+                    && !config
+                        .admin_chat_ids
+                        .iter()
+                        .any(|id| id == &channel_user_id)
+                {
+                    return Some(Ok("❌ identity 연결은 관리자만 가능합니다.".to_string()));
+                }
+
+                let s = store.lock().await;
+                match s.link_identity(global_user_id, channel, &channel_user_id) {
+                    Ok(()) => Some(Ok(format!(
+                        "✅ {channel}:{channel_user_id} → {global_user_id} 연결 완료.\n\
+                         이제 연결된 채널에서 동일한 대화 기록을 공유합니다."
+                    ))),
+                    Err(e) => Some(Err(e)),
+                }
             }
 
             _ if trimmed.starts_with("/teach") => {

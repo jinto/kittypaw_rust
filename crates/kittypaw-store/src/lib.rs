@@ -14,6 +14,7 @@ use rusqlite_migration::{Migrations, M};
 mod context;
 mod conversation;
 mod execution;
+pub mod identity;
 mod permission;
 mod storage;
 
@@ -30,6 +31,7 @@ fn migrations() -> Migrations<'static> {
         M::up(include_str!("migrations/005_execution_history.sql")),
         M::up(include_str!("migrations/006_fts5_memory.sql")),
         M::up(include_str!("migrations/007_token_usage.sql")),
+        M::up(include_str!("migrations/008_user_identities.sql")),
     ])
 }
 

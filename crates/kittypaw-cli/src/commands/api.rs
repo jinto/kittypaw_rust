@@ -95,6 +95,12 @@ pub(crate) fn build_api_router(api_key: &str, state: ApiState) -> Option<Router>
         .route("/api/v1/skills/{name}", delete(api_skills_delete))
         .route("/api/v1/chat", post(api_chat))
         .route("/api/v1/config/check", get(api_config_check))
+        .route("/api/v1/users/link", post(api_users_link))
+        .route("/api/v1/users/{id}/identities", get(api_users_identities))
+        .route(
+            "/api/v1/users/{id}/identities/{channel}",
+            delete(api_users_unlink),
+        )
         .with_state(state)
         .route_layer(middleware::from_fn_with_state(
             api_key.to_string(),
@@ -342,6 +348,81 @@ async fn api_config_check(State(st): State<ApiState>) -> Json<Value> {
             "daily_token_limit": st.config.features.daily_token_limit,
         }
     }))
+}
+
+// ── User identity endpoints ───────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct LinkIdentityRequest {
+    global_user_id: String,
+    channel: String,
+    channel_user_id: String,
+}
+
+async fn api_users_link(
+    State(st): State<ApiState>,
+    Json(body): Json<LinkIdentityRequest>,
+) -> (StatusCode, Json<Value>) {
+    let s = st.store.lock().await;
+    match s.link_identity(&body.global_user_id, &body.channel, &body.channel_user_id) {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(json!({
+                "linked": true,
+                "global_user_id": body.global_user_id,
+                "channel": body.channel,
+                "channel_user_id": body.channel_user_id,
+            })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("{e}")})),
+        ),
+    }
+}
+
+async fn api_users_identities(State(st): State<ApiState>, Path(id): Path<String>) -> Json<Value> {
+    let s = st.store.lock().await;
+    match s.list_identities(&id) {
+        Ok(identities) => {
+            let items: Vec<Value> = identities
+                .iter()
+                .map(|i| {
+                    json!({
+                        "channel": i.channel,
+                        "channel_user_id": i.channel_user_id,
+                        "created_at": i.created_at,
+                    })
+                })
+                .collect();
+            Json(json!({"global_user_id": id, "identities": items}))
+        }
+        Err(e) => Json(json!({"error": format!("{e}")})),
+    }
+}
+
+#[derive(Deserialize)]
+struct UnlinkParams {
+    channel_user_id: Option<String>,
+}
+
+async fn api_users_unlink(
+    State(st): State<ApiState>,
+    Path((id, channel)): Path<(String, String)>,
+    Query(params): Query<UnlinkParams>,
+) -> (StatusCode, Json<Value>) {
+    let s = st.store.lock().await;
+    match s.unlink_identity(&id, &channel, params.channel_user_id.as_deref()) {
+        Ok(true) => (StatusCode::OK, Json(json!({"unlinked": true}))),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "identity not found"})),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("{e}")})),
+        ),
+    }
 }
 
 fn uuid_short() -> String {
