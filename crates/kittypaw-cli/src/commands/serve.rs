@@ -14,7 +14,7 @@ use kittypaw_core::config::ChannelType;
 use kittypaw_core::types::EventType;
 use kittypaw_store::Store;
 
-use super::helpers::{db_path, require_provider};
+use super::helpers::db_path;
 
 // ── Dashboard types and handlers ──────────────────────────────────────────
 
@@ -178,8 +178,6 @@ pub(crate) async fn run_serve(bind_addr: &str) {
         std::process::exit(1);
     });
 
-    let provider = require_provider(&config);
-
     let sandbox = kittypaw_sandbox::sandbox::Sandbox::new(config.sandbox.clone());
 
     let db_path = db_path();
@@ -282,6 +280,10 @@ pub(crate) async fn run_serve(bind_addr: &str) {
         let _ = shutdown_tx.send(true);
     });
 
+    // Build fallback provider for agent session
+    let (default_provider, fallback_provider) =
+        super::helpers::require_provider_with_fallback(&config);
+
     // Event processing loop
     tracing::info!("Event processing loop started, waiting for events...");
     loop {
@@ -298,324 +300,40 @@ pub(crate) async fn run_serve(bind_addr: &str) {
                     },
                     None => break,
                 };
-                // Capture session_id before moving event
-                let session_id = match event.event_type {
-                    EventType::WebChat => event
-                        .payload
-                        .get("session_id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("default")
-                        .to_string(),
-                    EventType::Telegram => event
-                        .payload
-                        .get("chat_id")
-                        .map(|v| {
-                            v.as_str()
-                                .map(|s| s.to_string())
-                                .unwrap_or_else(|| v.to_string().trim_matches('"').to_string())
-                        })
-                        .unwrap_or_else(|| "default".to_string()),
-                    EventType::Desktop => event
-                        .payload
-                        .get("workspace_id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("default")
-                        .to_string(),
-                };
+
+                let session_id = event.session_id();
                 let event_type = event.event_type.clone();
                 let router = ResponseRouter { ws_channel: &ws_channel, config: &config };
 
-                // Extract raw event text for command/skill matching
-                let raw_event_text = event
-                    .payload
-                    .get("text")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-
-                // ── Telegram slash commands ──────────────────────────────
-                if event.event_type == EventType::Telegram {
-                    let text = raw_event_text.trim();
-
-                    // Device pairing: reject messages from unpaired chat IDs
-                    if !config.paired_chat_ids.is_empty()
-                        && !config.paired_chat_ids.iter().any(|id| id == &session_id)
-                    {
-                        if text.starts_with("/pair ") {
-                            let code = text.strip_prefix("/pair ").unwrap().trim();
-                            let expected = std::env::var("KITTYPAW_PAIR_CODE").unwrap_or_default();
-                            if !expected.is_empty() && code == expected {
-                                tracing::info!("Pairing accepted for chat_id={session_id}");
-                                send_telegram_message(&config, &session_id, "✅ 페어링 성공! paired_chat_ids에 이 ID를 추가하세요.").await;
-                            } else {
-                                send_telegram_message(&config, &session_id, "❌ 페어링 코드가 올바르지 않습니다.").await;
-                            }
+                // ── Security gate: reject unpaired Telegram chat IDs ────
+                if event.event_type == EventType::Telegram
+                    && !config.paired_chat_ids.is_empty()
+                    && !config.paired_chat_ids.iter().any(|id| id == &session_id)
+                {
+                    let text = event.payload.get("text").and_then(|v| v.as_str()).unwrap_or("").trim();
+                    if text.starts_with("/pair ") {
+                        let code = text.strip_prefix("/pair ").unwrap().trim();
+                        let expected = std::env::var("KITTYPAW_PAIR_CODE").unwrap_or_default();
+                        let msg = if !expected.is_empty() && code == expected {
+                            tracing::info!("Pairing accepted for chat_id={session_id}");
+                            "✅ 페어링 성공! paired_chat_ids에 이 ID를 추가하세요."
                         } else {
-                            tracing::warn!("Rejected message from unpaired chat_id={session_id}");
-                        }
-                        continue;
-                    }
-
-                    // /help, /start — show available commands
-                    if text == "/help" || text == "/start" {
-                        let help = "KittyPaw 명령어:\n\n\
-                            /run <스킬이름> — 스킬 즉시 실행\n\
-                            /status — 오늘 실행 통계\n\
-                            /teach <설명> — 새 스킬 가르치기\n\
-                            /pair <코드> — 디바이스 페어링\n\
-                            /help — 도움말";
-                        send_telegram_message(&config, &session_id, help).await;
-                        continue;
-                    }
-
-                    // /status — today's execution stats
-                    if text == "/status" {
-                        let st = store.lock().await;
-                        match st.today_stats() {
-                            Ok(stats) => {
-                                let msg = format!(
-                                    "📊 오늘 실행: {} (성공 {}, 실패 {})\n토큰: {}",
-                                    stats.total_runs, stats.successful, stats.failed, stats.total_tokens
-                                );
-                                drop(st);
-                                send_telegram_message(&config, &session_id, &msg).await;
-                            }
-                            Err(e) => {
-                                drop(st);
-                                tracing::warn!("Failed to get today_stats: {e}");
-                                send_telegram_message(&config, &session_id, "통계를 가져올 수 없습니다.").await;
-                            }
-                        }
-                        continue;
-                    }
-
-                    // /run <name> — execute a skill or package by name
-                    if let Some(skill_name) = text.strip_prefix("/run ").map(str::trim) {
-                        if skill_name.is_empty() {
-                            send_telegram_message(&config, &session_id, "Usage: /run <스킬이름>").await;
-                            continue;
-                        }
-
-                        // Try user-taught skill first
-                        let found_skill = kittypaw_core::skill::load_skill(skill_name)
-                            .ok()
-                            .flatten();
-
-                        if let Some((skill, code_or_prompt)) = found_skill {
-                            // SKILL.md format: use LLM to generate JS from the prompt
-                            let js_code = if skill.format == kittypaw_core::skill::SkillFormat::SkillMd {
-                                let messages = vec![
-                                    kittypaw_core::types::LlmMessage {
-                                        role: kittypaw_core::types::Role::System,
-                                        content: format!("{}\n\n{}", kittypaw_cli::agent_loop::SYSTEM_PROMPT, code_or_prompt),
-                                    },
-                                    kittypaw_core::types::LlmMessage {
-                                        role: kittypaw_core::types::Role::User,
-                                        content: format!("Execute this skill for chat_id={}", session_id),
-                                    },
-                                ];
-                                match provider.generate(&messages).await {
-                                    Ok(resp) => resp.content,
-                                    Err(e) => {
-                                        send_telegram_message(&config, &session_id, &format!("SKILL.md 실행 오류: {e}")).await;
-                                        continue;
-                                    }
-                                }
-                            } else {
-                                code_or_prompt
-                            };
-                            let wrapped_code = format!("const ctx = JSON.parse(__context__);\n{js_code}");
-                            let context = serde_json::json!({
-                                "event_type": "telegram",
-                                "event_text": "",
-                                "chat_id": session_id,
-                                "skill_name": skill_name,
-                            });
-                            match sandbox.execute(&wrapped_code, context).await {
-                                Ok(exec_result) => {
-                                    if !exec_result.skill_calls.is_empty() {
-                                        let st = store.lock().await;
-                                        let preresolved = kittypaw_cli::skill_executor::resolve_storage_calls(
-                                            &exec_result.skill_calls, &*st, Some(&skill.name),
-                                        );
-                                        drop(st);
-                                        let mut checker = kittypaw_core::capability::CapabilityChecker::from_skill_permissions(&skill.permissions);
-                                        let _ = kittypaw_cli::skill_executor::execute_skill_calls(
-                                            &exec_result.skill_calls, &config, preresolved,
-                                            Some(&skill.name), Some(&mut checker), None,
-                                        ).await;
-                                    }
-                                    let output = if exec_result.output.is_empty() {
-                                        "(no output)".to_string()
-                                    } else {
-                                        exec_result.output.clone()
-                                    };
-                                    send_telegram_message(&config, &session_id, &output).await;
-                                }
-                                Err(e) => {
-                                    send_telegram_message(&config, &session_id, &format!("스킬 실행 오류: {e}")).await;
-                                }
-                            }
-                            continue;
-                        }
-
-                        // Try installed package
-                        let packages_dir = std::path::PathBuf::from(".kittypaw/packages");
-                        let pkg_mgr = kittypaw_core::package_manager::PackageManager::new(packages_dir.clone());
-                        let found_pkg = pkg_mgr.load_package(skill_name).ok();
-
-                        if let Some(pkg) = found_pkg {
-                            let js_path = packages_dir.join(skill_name).join("main.js");
-                            match std::fs::read_to_string(&js_path) {
-                                Ok(js_code) => {
-                                    let config_values = pkg_mgr.get_config_with_defaults(skill_name).unwrap_or_default();
-                                    let shared_ctx = {
-                                        let st = store.lock().await;
-                                        st.list_shared_context().unwrap_or_default()
-                                    };
-                                    let event_payload = serde_json::json!({
-                                        "event_type": "telegram",
-                                        "chat_id": session_id,
-                                    });
-                                    let context = pkg.build_context(&config_values, event_payload, None, &shared_ctx);
-                                    let wrapped_code = format!("const ctx = JSON.parse(__context__);\n{js_code}");
-
-                                    match sandbox.execute(&wrapped_code, context).await {
-                                        Ok(exec_result) => {
-                                            if !exec_result.skill_calls.is_empty() {
-                                                let st = store.lock().await;
-                                                let preresolved = kittypaw_cli::skill_executor::resolve_storage_calls(
-                                                    &exec_result.skill_calls, &*st, Some(&pkg.meta.id),
-                                                );
-                                                drop(st);
-                                                let mut checker = kittypaw_core::capability::CapabilityChecker::from_package_permissions(&pkg.permissions);
-                                                let _ = kittypaw_cli::skill_executor::execute_skill_calls(
-                                                    &exec_result.skill_calls, &config, preresolved,
-                                                    Some(&pkg.meta.id), Some(&mut checker), None,
-                                                ).await;
-                                            }
-                                            let output = if exec_result.output.is_empty() {
-                                                "(no output)".to_string()
-                                            } else {
-                                                exec_result.output.clone()
-                                            };
-                                            send_telegram_message(&config, &session_id, &output).await;
-                                        }
-                                        Err(e) => {
-                                            send_telegram_message(&config, &session_id, &format!("패키지 실행 오류: {e}")).await;
-                                        }
-                                    }
-                                }
-                                Err(_) => {
-                                    send_telegram_message(&config, &session_id, &format!("패키지 '{skill_name}'의 main.js를 찾을 수 없습니다.")).await;
-                                }
-                            }
-                            continue;
-                        }
-
-                        // Neither skill nor package found
-                        send_telegram_message(&config, &session_id, &format!("스킬 또는 패키지 '{skill_name}'을 찾을 수 없습니다.")).await;
-                        continue;
-                    }
-                }
-
-                // Check for /teach command on Telegram
-                let is_teach = event.event_type == EventType::Telegram
-                    && raw_event_text.starts_with("/teach");
-
-                if is_teach {
-                    let teach_text = raw_event_text.strip_prefix("/teach").unwrap_or("").trim();
-                    let chat_id_str = event
-                        .payload
-                        .get("chat_id")
-                        .map(|v| {
-                            v.as_str()
-                                .map(|s| s.to_string())
-                                .unwrap_or_else(|| v.to_string())
-                        })
-                        .unwrap_or_default();
-
-                    if teach_text.is_empty() {
-                        send_telegram_message(&config, &chat_id_str, "Usage: /teach <description>\n\nExample: /teach send me a daily joke").await;
+                            "❌ 페어링 코드가 올바르지 않습니다."
+                        };
+                        send_telegram_message(&config, &session_id, msg).await;
                     } else {
-                        send_telegram_message(&config, &chat_id_str, &format!("Generating skill for: {teach_text}...")).await;
-                        match kittypaw_cli::teach_loop::handle_teach(teach_text, &chat_id_str, &*provider, &sandbox, &config).await {
-                            Ok(ref result @ kittypaw_cli::teach_loop::TeachResult::Generated { ref code, ref dry_run_output, ref skill_name, .. }) => {
-                                match kittypaw_cli::teach_loop::approve_skill(result) {
-                                    Ok(()) => {
-                                        let msg = format!(
-                                            "Skill '{skill_name}' generated and saved!\n\nCode:\n{code}\n\nDry-run output: {dry_run_output}"
-                                        );
-                                        send_telegram_message(&config, &chat_id_str, &msg).await;
-                                    }
-                                    Err(e) => {
-                                        send_telegram_message(&config, &chat_id_str, &format!("Failed to save skill: {e}")).await;
-                                    }
-                                }
-                            }
-                            Ok(kittypaw_cli::teach_loop::TeachResult::Error(e)) => {
-                                send_telegram_message(&config, &chat_id_str, &format!("Teach failed: {e}")).await;
-                            }
-                            Err(e) => {
-                                send_telegram_message(&config, &chat_id_str, &format!("Error: {e}")).await;
-                            }
-                        }
+                        tracing::warn!("Rejected message from unpaired chat_id={session_id}");
                     }
                     continue;
                 }
 
-                // Check taught skills before falling through to agent loop
-                let skills = kittypaw_core::skill::load_all_skills();
-                let matched_skill = match skills {
-                    Ok(ref skill_list) => skill_list.iter().find(|(skill, _js)| {
-                        skill.enabled && kittypaw_core::skill::match_trigger(skill, &raw_event_text)
-                    }),
-                    Err(ref e) => {
-                        tracing::warn!("Failed to load skills: {e}");
-                        None
-                    }
-                };
-
-                if let Some((skill, js_code)) = matched_skill {
-                    let wrapped_code = format!("const ctx = JSON.parse(__context__);\n{}", js_code);
-                    let context = serde_json::json!({
-                        "event_type": format!("{:?}", event_type).to_lowercase(),
-                        "event_text": raw_event_text,
-                        "chat_id": session_id,
-                    });
-
-                    match sandbox.execute(&wrapped_code, context).await {
-                        Ok(exec_result) => {
-                            if !exec_result.skill_calls.is_empty() {
-                                let preresolved = kittypaw_cli::skill_executor::resolve_storage_calls(&exec_result.skill_calls, &*store.lock().await, Some(&skill.name));
-                                let mut checker = kittypaw_core::capability::CapabilityChecker::from_skill_permissions(&skill.permissions);
-                                let _ = kittypaw_cli::skill_executor::execute_skill_calls(&exec_result.skill_calls, &config, preresolved, Some(&skill.name), Some(&mut checker), None).await;
-                            }
-                            let output = if exec_result.output.is_empty() {
-                                "(no output)".to_string()
-                            } else {
-                                exec_result.output.clone()
-                            };
-                            router.send_response(&event_type, &session_id, &output).await;
-                        }
-                        Err(e) => {
-                            tracing::error!("Skill execution error for session {session_id}: {e}");
-                            router.send_error(&event_type, &session_id, &format!("Skill error: {e}")).await;
-                        }
-                    }
-                    continue;
-                }
-
-                // No skill matched — check freeform fallback
-                if !config.freeform_fallback {
-                    let msg = "No matching skill found. Use /teach to create one.";
-                    router.send_response(&event_type, &session_id, msg).await;
-                    continue;
-                }
-
+                // ── Unified event processing via AgentSession ───────────
+                // AgentSession.run() handles:
+                // - Slash commands (/help, /status, /run, /teach) → fast path
+                // - Natural language → LLM agent loop with full primitives
                 let session = kittypaw_cli::agent_loop::AgentSession {
-                    provider: &*provider,
-                    fallback_provider: None,
+                    provider: &*default_provider,
+                    fallback_provider: fallback_provider.as_deref(),
                     sandbox: &sandbox,
                     store: Arc::clone(&store),
                     config: &config,

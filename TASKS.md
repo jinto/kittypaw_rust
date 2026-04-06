@@ -142,8 +142,8 @@
 
 ### 파일 접근 보안
 - [ ] 온보딩 폴더 접근 제어: "작업 폴더를 선택해주세요" 단계 추가
-- [ ] FilePermissionChecker를 File.read/write/edit에 실제 연결 (인프라는 존재)
-- [ ] SandboxConfig::allowed_paths 활성화
+- [x] FilePermissionChecker를 File.read/write/edit에 실제 연결 (인프라는 존재)
+- [x] SandboxConfig::allowed_paths 활성화
 - [ ] macOS NSOpenPanel + Security-Scoped Bookmarks 통합
 
 ### 커뮤니티 스킬 마켓플레이스
@@ -224,7 +224,7 @@
 - [x] 온보딩 작업 폴더 선택 + 텔레그램 BotFather 가이드 + 채팅ID 자동 감지
 - [x] 온보딩 순서: 환영 → LLM → 텔레그램 → 작업폴더 → 완료
 - [x] Skill.create 프리미티브: LLM이 자동으로 스킬 생성+스케줄 등록 (Hermes skill_manage 패턴)
-- [ ] serve.rs → agent_loop 전환 (텔레그램에서도 Skill.create 동작하게)
+- [x] serve.rs → agent_loop 전환 (텔레그램에서도 Skill.create 동작하게)
 - [ ] /daily 모닝 브리핑 (Todoist + Calendar)
 
 ---

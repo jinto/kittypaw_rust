@@ -4,12 +4,10 @@ use kittypaw_core::error::{KittypawError, Result};
 use kittypaw_core::types::SkillCall;
 
 pub(super) fn execute_file(call: &SkillCall, data_dir: Option<&Path>) -> Result<serde_json::Value> {
-    let data_dir = data_dir.ok_or_else(|| {
-        KittypawError::Sandbox("File operations require a package data directory".into())
-    })?;
-
-    // Create data dir if it doesn't exist
-    std::fs::create_dir_all(data_dir)?;
+    if let Some(dir) = data_dir {
+        // Create data dir if it doesn't exist
+        std::fs::create_dir_all(dir)?;
+    }
 
     match call.method.as_str() {
         "read" => {
@@ -17,7 +15,7 @@ pub(super) fn execute_file(call: &SkillCall, data_dir: Option<&Path>) -> Result<
             if rel_path.is_empty() {
                 return Err(KittypawError::Sandbox("File.read: path is required".into()));
             }
-            let full_path = validate_file_path(data_dir, rel_path)?;
+            let full_path = resolve_file_path(data_dir, rel_path)?;
             let content = std::fs::read_to_string(&full_path)?;
             Ok(serde_json::json!({ "content": content }))
         }
@@ -29,14 +27,12 @@ pub(super) fn execute_file(call: &SkillCall, data_dir: Option<&Path>) -> Result<
                     "File.write: path is required".into(),
                 ));
             }
-            let full_path = validate_file_path(data_dir, rel_path)?;
-            // Max file size: 10MB
+            let full_path = resolve_file_path(data_dir, rel_path)?;
             if content.len() > 10 * 1024 * 1024 {
                 return Err(KittypawError::Sandbox(
                     "File.write: content exceeds 10MB limit".into(),
                 ));
             }
-            // Create parent directories
             if let Some(parent) = full_path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
@@ -55,7 +51,7 @@ pub(super) fn execute_file(call: &SkillCall, data_dir: Option<&Path>) -> Result<
                     "File.edit: old content is required".into(),
                 ));
             }
-            let full_path = validate_file_path(data_dir, rel_path)?;
+            let full_path = resolve_file_path(data_dir, rel_path)?;
             let content = std::fs::read_to_string(&full_path)?;
             if !content.contains(old_content) {
                 return Err(KittypawError::Sandbox(
@@ -76,6 +72,32 @@ pub(super) fn execute_file(call: &SkillCall, data_dir: Option<&Path>) -> Result<
             call.method
         ))),
     }
+}
+
+/// Resolve a file path: relative within data_dir (package context) or absolute (agent context).
+fn resolve_file_path(data_dir: Option<&Path>, path: &str) -> Result<PathBuf> {
+    if let Some(dir) = data_dir {
+        validate_file_path(dir, path)
+    } else {
+        validate_absolute_path(path)
+    }
+}
+
+/// Validate an absolute file path for agent-context file operations.
+/// Permission checks happen upstream (allowed_paths or UI callback).
+fn validate_absolute_path(path: &str) -> Result<PathBuf> {
+    if path.contains("..") {
+        return Err(KittypawError::Sandbox(
+            "File: path traversal not allowed".into(),
+        ));
+    }
+    let p = Path::new(path);
+    if !p.is_absolute() {
+        return Err(KittypawError::Sandbox(
+            "File: absolute path required (no data directory context)".into(),
+        ));
+    }
+    Ok(p.to_path_buf())
 }
 
 /// Validate that a relative path stays within the data directory.

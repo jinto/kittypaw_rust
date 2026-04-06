@@ -51,26 +51,21 @@ fn check_capability(
     }
 }
 
-/// Check file-level permission before a `File.read` or `File.write` operation.
+/// Check file access against `config.sandbox.allowed_paths`, then fall back to
+/// a UI permission callback if the path is outside the allowed set.
 ///
-/// When `on_permission` is `None`, the call is auto-allowed (legacy/headless mode).
-/// Otherwise, a [`PermissionRequest`] is sent through the callback and the caller
-/// blocks until the UI responds with a [`PermissionDecision`].
-///
-/// Returns `Ok(())` when the operation may proceed, or an `Err` with a
-/// user-facing message when the request was denied or the channel dropped.
-async fn check_file_permission(
+/// Three-tier check:
+/// 1. If `allowed_paths` is empty → auto-allow (backward compatible, no restrictions)
+/// 2. If path is within an allowed directory → allow
+/// 3. Otherwise → ask user via `on_permission` callback (or deny if no callback)
+async fn check_file_allowed(
     call: &SkillCall,
+    config: &kittypaw_core::config::Config,
     on_permission: Option<&PermissionCallback>,
 ) -> std::result::Result<(), String> {
-    let cb = match on_permission {
-        Some(cb) => cb,
-        None => return Ok(()), // auto-allow
-    };
-
     let action = match call.method.as_str() {
         "read" => "read",
-        "write" => "write",
+        "write" | "edit" => "write",
         _ => return Ok(()), // unknown methods are rejected later by execute_file
     };
 
@@ -81,12 +76,34 @@ async fn check_file_permission(
         .unwrap_or("")
         .to_string();
 
+    if path.is_empty() {
+        return Ok(()); // will be caught by execute_file validation
+    }
+
+    // Tier 1: no allowed_paths configured → backward-compatible auto-allow
+    let allowed = &config.sandbox.allowed_paths;
+    if allowed.is_empty() {
+        return Ok(());
+    }
+
+    // Tier 2: check if path falls within any allowed directory
+    let target = std::path::Path::new(&path);
+    if is_within_allowed_paths(target, allowed) {
+        return Ok(());
+    }
+
+    // Tier 3: path is outside allowed set → ask user or deny
+    let cb = match on_permission {
+        Some(cb) => cb,
+        None => return Err(format!("File.{action} denied: path not in allowed_paths")),
+    };
+
     let request = PermissionRequest {
         request_id: uuid_v4(),
         resource_kind: ResourceKind::File,
         resource_path: path,
         action: action.to_string(),
-        workspace_id: String::new(), // filled by caller if workspace-scoped
+        workspace_id: String::new(),
     };
 
     let rx = cb(request);
@@ -95,6 +112,16 @@ async fn check_file_permission(
         Ok(PermissionDecision::Deny) => Err(format!("Permission denied: File.{action}")),
         Err(_) => Err("Permission check failed: response channel dropped".to_string()),
     }
+}
+
+/// Check if a path falls within any of the allowed directory prefixes.
+fn is_within_allowed_paths(path: &std::path::Path, allowed: &[std::path::PathBuf]) -> bool {
+    // Try to canonicalize for symlink resolution; fall back to raw comparison
+    let check_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    allowed.iter().any(|dir| {
+        let check_dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+        check_path.starts_with(&check_dir)
+    })
 }
 
 /// Generate a simple v4-style UUID without pulling in the `uuid` crate.
@@ -170,9 +197,9 @@ async fn resolve_skill_call_inner(
         }
     }
 
-    // File calls are synchronous — but require an async permission check first
+    // File calls are synchronous — but require path + permission checks first
     if call.skill_name == "File" {
-        if let Err(msg) = check_file_permission(call, on_permission).await {
+        if let Err(msg) = check_file_allowed(call, config, on_permission).await {
             return serde_json::to_string(&serde_json::json!({"error": msg}))
                 .unwrap_or_else(|_| "null".to_string());
         }
@@ -465,7 +492,7 @@ async fn execute_single_call(
         "Http" => http::execute_http(call, allowed_hosts).await,
         "Web" => http::execute_web(call, allowed_hosts).await,
         "Llm" => llm::execute_llm(call, config, llm_call_count, model_override).await,
-        "File" => match check_file_permission(call, on_permission).await {
+        "File" => match check_file_allowed(call, config, on_permission).await {
             Ok(()) => file::execute_file(call, None),
             Err(msg) => Err(KittypawError::CapabilityDenied(msg)),
         },

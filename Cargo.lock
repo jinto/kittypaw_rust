@@ -3095,6 +3095,7 @@ dependencies = [
 name = "kittypaw-cli"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "atty",
  "axum",
  "chrono",
