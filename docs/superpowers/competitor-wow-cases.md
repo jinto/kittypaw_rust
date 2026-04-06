@@ -4,7 +4,7 @@
 
 | # | 사용 사례 | 와우 포인트 | KittyPaw 현황 | 가능? |
 |---|----------|-----------|-------------|------|
-| 1 | **개인 AI 뉴스 브리핑** | HN 기사 → 관심사 랭킹 → 오디오 요약 → 매일 아침 Telegram | trend-scanner + content-drafter 체인 있음. Telegram 전송 가능. | ✅ 텍스트 브리핑 가능. ⚠️ 오디오(TTS) 없음 |
+| 1 | **개인 AI 뉴스 브리핑** | HN 기사 → 관심사 랭킹 → 오디오 요약 → 매일 아침 Telegram | trend-scanner + content-drafter 체인 + Tts.speak + Telegram.sendVoice | ✅ 텍스트+음성 브리핑 모두 가능 (edge-tts-rust, 무료) |
 | 2 | **트렌딩 오픈소스 리포트** | Reddit + X → AI 트렌드 Top 5 → 1시간 셋업 | Web.search + Http.get + Llm.generate + Telegram.sendMessage | ✅ 스킬로 즉시 구현 가능 |
 | 3 | **자가 학습 스킬** | 복잡한 작업 완료 후 스스로 스킬 생성 → 다음에 자동 실행 | 자가 개선 루프 (2회 실패 시 LLM 수정) 있음 | ⚠️ "수정"은 되지만 "새 스킬 자동 생성"은 없음 |
 | 4 | **멀티채널 도달** | Telegram/Discord/Slack/WhatsApp/Signal + $5 VPS | Telegram/Slack/Discord 3채널 + daemon | ✅ 3채널. WhatsApp/Signal은 미지원 |
@@ -33,14 +33,14 @@
 
 | 상태 | 수 | 사용 사례 |
 |------|---|----------|
-| ✅ 지금 가능 | 6 | 텍스트 브리핑, 트렌딩 리포트, 멀티채널, VPS, 기억, 야간 작업 |
-| ⚠️ 부분 가능 | 4 | 오디오 TTS, 스킬 자동 생성, 병렬 위임, 생태계 수 |
+| ✅ 지금 가능 | 7 | 텍스트+음성 브리핑, 트렌딩 리포트, 멀티채널, VPS, 기억, 야간 작업 |
+| ⚠️ 부분 가능 | 3 | 스킬 자동 생성, 병렬 위임, 생태계 수 |
 | ❌ 불가 | 0 | - |
 | N/A | 2 | 코딩 에이전트 전용 |
 
 ## 남은 갭 (구현 우선순위)
 
-1. **TTS (Text-to-Speech)** — 브리핑을 오디오로 Telegram에 전송. macOS `say` 명령 또는 OpenAI TTS API
+1. ~~**TTS (Text-to-Speech)**~~ ✅ 완료 — `Tts.speak` + `Telegram.sendVoice` (edge-tts-rust, 무료)
 2. **스킬 자동 생성 (Procedural Memory)** — 복잡한 작업 완료 후 teach_loop 자동 호출
 3. **Agent.delegate 병렬** — 여러 서브에이전트를 동시에 실행
 4. **스킬 수 확대** — 커뮤니티 + 큐레이션 스킬 100개 목표

@@ -27,7 +27,13 @@ fn js_value_to_json(v: &Value<'_>) -> serde_json::Value {
 pub(crate) const KNOWN_SKILLS: &[(&str, &[&str])] = &[
     (
         "Telegram",
-        &["sendMessage", "sendPhoto", "editMessage", "sendDocument"],
+        &[
+            "sendMessage",
+            "sendPhoto",
+            "editMessage",
+            "sendDocument",
+            "sendVoice",
+        ],
     ),
     ("Slack", &["sendMessage"]),
     ("Discord", &["sendMessage"]),
@@ -42,6 +48,7 @@ pub(crate) const KNOWN_SKILLS: &[(&str, &[&str])] = &[
     ("Git", &["status", "diff", "log", "commit"]),
     ("Agent", &["delegate"]),
     ("Skill", &["create", "list", "delete"]),
+    ("Tts", &["speak"]),
 ];
 
 /// Run QuickJS using AsyncRuntime + AsyncContext (avoids RefCell borrow conflicts).

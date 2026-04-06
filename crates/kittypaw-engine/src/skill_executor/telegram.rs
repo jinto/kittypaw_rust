@@ -179,6 +179,60 @@ pub(super) async fn execute_telegram(
             }
             Ok(body)
         }
+        "sendVoice" => {
+            // ABI: Telegram.sendVoice(chatId, filePath, caption?)
+            let (chat_id, file_path) = require_telegram_args(call, "file_path")?;
+            let caption = call.args.get(2).and_then(|v| v.as_str()).unwrap_or("");
+
+            let file_bytes = std::fs::read(&file_path)
+                .map_err(|e| KittypawError::Skill(format!("Failed to read audio file: {e}")))?;
+            // Clean up temp TTS file after reading
+            if file_path.contains("kittypaw-tts") {
+                let _ = std::fs::remove_file(&file_path);
+            }
+            let file_name = std::path::Path::new(&file_path)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+
+            let url = format!("https://api.telegram.org/bot{bot_token}/sendVoice");
+            let mut form = reqwest::multipart::Form::new()
+                .text("chat_id", chat_id.to_string())
+                .part(
+                    "voice",
+                    reqwest::multipart::Part::bytes(file_bytes)
+                        .file_name(file_name)
+                        .mime_str("audio/mpeg")
+                        .unwrap(),
+                );
+            if !caption.is_empty() {
+                form = form.text("caption", caption.to_string());
+            }
+
+            let resp = client
+                .post(&url)
+                .multipart(form)
+                .send()
+                .await
+                .map_err(|e| KittypawError::Skill(format!("Telegram API error: {e}")))?;
+
+            let status = resp.status();
+            let body: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| KittypawError::Skill(format!("Telegram response parse error: {e}")))?;
+            if !status.is_success() {
+                let err = body
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown error");
+                return Err(KittypawError::Skill(format!(
+                    "Telegram sendVoice error {status}: {err}"
+                )));
+            }
+            Ok(body)
+        }
         _ => Err(KittypawError::CapabilityDenied(format!(
             "Unknown Telegram method: {}",
             call.method

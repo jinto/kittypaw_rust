@@ -11,6 +11,7 @@ mod skill_mgmt;
 mod slack;
 mod storage;
 mod telegram;
+mod tts;
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -501,6 +502,7 @@ async fn execute_single_call(
         "Git" => git::execute_git(call).await,
         "Agent" => agent::execute_agent(call, config).await,
         "Skill" => skill_mgmt::execute_skill_mgmt(call).await,
+        "Tts" => tts::execute_tts(call).await,
         _ => Err(KittypawError::CapabilityDenied(format!(
             "Unknown skill: {}",
             call.skill_name
