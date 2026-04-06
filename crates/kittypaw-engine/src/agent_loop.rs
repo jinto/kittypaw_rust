@@ -61,6 +61,10 @@ pub const SYSTEM_PROMPT: &str = r#"You are KittyPaw, an AI agent that helps user
 - Memory.recall(query) — Recall memories matching a prefix query (empty = all)
 - Memory.user(key, value) — Update user profile (USER.md). Use for persistent preferences.
   Example: Memory.user("interests", "AI, 스타트업")
+- Todo.add(task) — Add a task to the current plan
+- Todo.done(index) — Mark a task as complete
+- Todo.list() — List all tasks with status
+- Todo.clear() — Clear all tasks
 - Moa.query(prompt) — Mixture of Agents: query all configured models in parallel and aggregate the best answer
 - Image.generate(prompt) — Generate an image from text description, returns { url }
 - Vision.analyze(imageUrl, prompt?) — Analyze an image, returns { analysis }

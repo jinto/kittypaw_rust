@@ -14,6 +14,7 @@ mod skill_mgmt;
 mod slack;
 mod storage;
 mod telegram;
+mod todo;
 mod tts;
 
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -268,6 +269,16 @@ async fn resolve_skill_call_inner(
     if call.skill_name == "Storage" {
         let s = store.lock().await;
         return match storage::execute_storage(call, &s, None) {
+            Ok(val) => serde_json::to_string(&val).unwrap_or_else(|_| "null".to_string()),
+            Err(e) => serde_json::to_string(&serde_json::json!({"error": e.to_string()}))
+                .unwrap_or_else(|_| "null".to_string()),
+        };
+    }
+
+    // Todo calls need Store access
+    if call.skill_name == "Todo" {
+        let s = store.lock().await;
+        return match todo::execute_todo(call, &s) {
             Ok(val) => serde_json::to_string(&val).unwrap_or_else(|_| "null".to_string()),
             Err(e) => serde_json::to_string(&serde_json::json!({"error": e.to_string()}))
                 .unwrap_or_else(|_| "null".to_string()),
