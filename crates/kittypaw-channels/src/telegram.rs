@@ -28,6 +28,83 @@ impl TelegramChannel {
     fn api_url(&self, method: &str) -> String {
         format!("https://api.telegram.org/bot{}/{}", self.bot_token, method)
     }
+
+    /// Download a Telegram voice file and transcribe it using Whisper.
+    async fn transcribe_voice(&self, file_id: &str) -> Result<String> {
+        // Step 1: Get file path from Telegram
+        let url = self.api_url("getFile");
+        let resp: TelegramResponse<TelegramFile> = self
+            .client
+            .get(&url)
+            .query(&[("file_id", file_id)])
+            .send()
+            .await
+            .map_err(|e| KittypawError::Skill(format!("getFile error: {e}")))?
+            .json()
+            .await
+            .map_err(|e| KittypawError::Skill(format!("getFile parse error: {e}")))?;
+
+        let file_path = resp
+            .result
+            .and_then(|f| f.file_path)
+            .ok_or_else(|| KittypawError::Skill("No file_path in getFile response".into()))?;
+
+        // Step 2: Download the audio file
+        let download_url = format!(
+            "https://api.telegram.org/file/bot{}/{}",
+            self.bot_token, file_path
+        );
+        let resp = self
+            .client
+            .get(&download_url)
+            .send()
+            .await
+            .map_err(|e| KittypawError::Skill(format!("Voice download error: {e}")))?;
+        // Guard: reject files > 20MB (Whisper limit is 25MB)
+        if let Some(len) = resp.content_length() {
+            if len > 20 * 1024 * 1024 {
+                return Err(KittypawError::Skill(format!(
+                    "Voice file too large: {len} bytes"
+                )));
+            }
+        }
+        let audio_data = resp
+            .bytes()
+            .await
+            .map_err(|e| KittypawError::Skill(format!("Voice read error: {e}")))?;
+
+        // Step 3: Transcribe using Whisper (needs OpenAI API key)
+        let api_key = std::env::var("OPENAI_API_KEY")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                kittypaw_core::secrets::get_secret("models", "openai")
+                    .ok()
+                    .flatten()
+                    .filter(|s| !s.is_empty())
+            })
+            .unwrap_or_default();
+
+        if api_key.is_empty() {
+            return Err(KittypawError::Skill(
+                "No API key for voice transcription".into(),
+            ));
+        }
+
+        let format = if file_path.ends_with(".oga") || file_path.ends_with(".ogg") {
+            "ogg"
+        } else {
+            "mp3"
+        };
+
+        let stt = kittypaw_llm::stt::WhisperClient::with_language(&api_key, "ko");
+        let text = stt.transcribe(&audio_data, format).await?;
+        info!(
+            "Voice transcribed: {}",
+            text.chars().take(50).collect::<String>()
+        );
+        Ok(text)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -48,6 +125,17 @@ struct Message {
     chat: Chat,
     text: Option<String>,
     from: Option<User>,
+    voice: Option<Voice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Voice {
+    file_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TelegramFile {
+    file_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -127,9 +215,21 @@ impl Channel for TelegramChannel {
                                     offset = update.update_id + 1;
 
                                     if let Some(msg) = update.message {
-                                        let text = match msg.text {
-                                            Some(t) => t,
-                                            None => continue,
+                                        // Resolve text: from text field or voice transcription
+                                        let text = if let Some(t) = msg.text {
+                                            t
+                                        } else if let Some(ref voice) = msg.voice {
+                                            // Download voice file and transcribe
+                                            match self.transcribe_voice(&voice.file_id).await {
+                                                Ok(t) if !t.is_empty() => t,
+                                                Ok(_) => continue,
+                                                Err(e) => {
+                                                    warn!("Voice transcription failed: {e}");
+                                                    continue;
+                                                }
+                                            }
+                                        } else {
+                                            continue;
                                         };
                                         let chat_id = msg.chat.id;
                                         let from_name = msg
