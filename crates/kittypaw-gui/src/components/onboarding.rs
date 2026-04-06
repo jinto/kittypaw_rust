@@ -20,8 +20,9 @@ pub fn Onboarding(on_complete: EventHandler) -> Element {
 
     match step() {
         1 => rsx! { StepWelcome { on_next: move |_| step.set(2) } },
-        2 => rsx! { StepLlm { on_next: move |_| step.set(3) } },
-        3 => rsx! { StepTelegram { on_next: move |_| step.set(4) } },
+        2 => rsx! { StepWorkspace { on_next: move |_| step.set(3) } },
+        3 => rsx! { StepLlm { on_next: move |_| step.set(4) } },
+        4 => rsx! { StepTelegram { on_next: move |_| step.set(5) } },
         _ => rsx! { StepComplete { on_complete } },
     }
 }
@@ -58,7 +59,86 @@ fn StepWelcome(on_next: EventHandler) -> Element {
     }
 }
 
-// ── Step 2: LLM Selection ─────────────────────────────────────────────────────
+// ── Step 2: Workspace ────────────────────────────────────────────────────────
+
+#[component]
+fn StepWorkspace(on_next: EventHandler) -> Element {
+    let mut workspace_path = use_signal(String::new);
+
+    rsx! {
+        div {
+            style: "position: fixed; inset: 0; background: #F5F3F0; display: flex; align-items: center; justify-content: center; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;",
+
+            div {
+                style: "background: #FFFFFF; border: 1px solid #E7E5E4; border-radius: 14px; padding: 48px 56px; max-width: 520px; width: 100%; box-shadow: 0 4px 24px rgba(0,0,0,0.06);",
+
+                div { style: "text-align: center; margin-bottom: 32px;",
+                    div { style: "font-size: 40px; margin-bottom: 12px;", "📁" }
+                    h2 {
+                        style: "font-family: 'Fraunces', Georgia, serif; font-size: 26px; font-weight: 700; color: #1C1917; margin: 0 0 8px 0;",
+                        "작업 폴더를 선택해주세요"
+                    }
+                    p {
+                        style: "font-size: 14px; color: #78716C; margin: 0; line-height: 1.5;",
+                        "KittyPaw가 접근할 수 있는 폴더를 지정합니다"
+                    }
+                }
+
+                div { style: "display: flex; flex-direction: column; gap: 12px;",
+                    // Folder picker
+                    div { style: "display: flex; gap: 8px;",
+                        input {
+                            style: "flex: 1; padding: 10px 12px; border: 1px solid #E7E5E4; border-radius: 6px; font-size: 13px; outline: none; box-sizing: border-box; background: #F5F3F0; color: #1C1917;",
+                            placeholder: "폴더를 선택하세요...",
+                            value: "{workspace_path}",
+                            readonly: true,
+                        }
+                        button {
+                            style: "padding: 10px 16px; background: #1C1917; color: #F5F3F0; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap;",
+                            onclick: move |_| {
+                                spawn(async move {
+                                    if let Some(path) = rfd::AsyncFileDialog::new()
+                                        .set_title("작업 폴더 선택")
+                                        .pick_folder()
+                                        .await
+                                    {
+                                        workspace_path.set(path.path().to_string_lossy().to_string());
+                                    }
+                                });
+                            },
+                            "찾아보기"
+                        }
+                    }
+
+                    p {
+                        style: "font-size: 12px; color: #A8A29E; line-height: 1.5;",
+                        "이 폴더 안에서만 파일을 읽고 쓸 수 있습니다. 설정에서 나중에 변경할 수 있어요."
+                    }
+                }
+
+                div { style: "display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px;",
+                    button {
+                        style: "padding: 10px 20px; background: transparent; color: #78716C; border: 1px solid #E7E5E4; border-radius: 6px; font-size: 13px; cursor: pointer;",
+                        onclick: move |_| on_next.call(()),
+                        "건너뛰기"
+                    }
+                    button {
+                        style: "padding: 10px 24px; background: #86EFAC; color: #166534; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer;",
+                        disabled: workspace_path.read().is_empty(),
+                        onclick: move |_| {
+                            let path = workspace_path.read().clone();
+                            let _ = kittypaw_core::secrets::set_secret("workspace", "root_path", &path);
+                            on_next.call(());
+                        },
+                        "다음"
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Step 3: LLM Selection ─────────────────────────────────────────────────────
 
 #[component]
 fn StepLlm(on_next: EventHandler) -> Element {
