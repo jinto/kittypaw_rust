@@ -12,6 +12,8 @@ jobs:
   build-gui-macos:
     name: Build KittyPaw.app (${{ matrix.arch }})
     runs-on: macos-latest
+    env:
+      HAS_CERT: ${{ secrets.DEVELOPER_ID_CERT_BASE64 != '' }}
     strategy:
       matrix:
         include:
@@ -105,14 +107,14 @@ jobs:
           APP_DIR: KittyPaw.app/Contents
 
       - name: Sign app
-        if: ${{ secrets.DEVELOPER_ID_CERT_BASE64 != '' }}
+        if: ${{ env.HAS_CERT == 'true' }}
         run: |
           codesign --force --deep --options runtime \
             -s "Developer ID Application: JAE KWON PARK (QN9P7KSSMU)" \
             KittyPaw.app
 
       - name: Notarize app
-        if: ${{ secrets.DEVELOPER_ID_CERT_BASE64 != '' }}
+        if: ${{ env.HAS_CERT == 'true' }}
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
