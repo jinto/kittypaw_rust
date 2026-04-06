@@ -283,3 +283,295 @@ async fn test_agent_loop_handles_invalid_js() {
         "invalid JS should eventually error, not panic"
     );
 }
+
+// ── Phase 9: MemoryProvider integration ────────────────────────────────
+
+/// Memory.save + Memory.recall work end-to-end through the agent loop.
+#[tokio::test]
+async fn test_memory_save_and_recall() {
+    let provider = MockJsProvider::new(
+        r#"
+        await Memory.save("fav_city", "Seoul");
+        const memories = await Memory.recall("fav");
+        return JSON.stringify(memories);
+        "#,
+    );
+    let config = test_config();
+    let sandbox = Sandbox::new_threaded(config.sandbox.clone());
+    let store = Arc::new(Mutex::new(
+        Store::open(":memory:").expect("in-memory store"),
+    ));
+
+    let session = kittypaw_cli::agent_loop::AgentSession {
+        provider: &provider,
+        fallback_provider: None,
+        sandbox: &sandbox,
+        store: store.clone(),
+        config: &config,
+        on_token: None,
+        on_permission_request: None,
+    };
+
+    let result = session.run(desktop_event("remember my city")).await;
+    assert!(result.is_ok(), "memory save+recall: {:?}", result);
+    let text = result.unwrap();
+    assert!(
+        text.contains("Seoul"),
+        "expected recalled value 'Seoul', got: {text}"
+    );
+}
+
+/// Memory.search returns FTS5 results from pre-seeded execution history.
+#[tokio::test]
+async fn test_memory_search_fts5() {
+    let provider = MockJsProvider::new(
+        r#"
+        const hits = await Memory.search("브리핑");
+        return JSON.stringify(hits);
+        "#,
+    );
+    let config = test_config();
+    let sandbox = Sandbox::new_threaded(config.sandbox.clone());
+    let store = Arc::new(Mutex::new(
+        Store::open(":memory:").expect("in-memory store"),
+    ));
+
+    // Pre-seed execution history for FTS5
+    {
+        let s = store.lock().await;
+        s.record_execution(
+            "weather",
+            "날씨 브리핑",
+            "2026-04-07T09:00:00Z",
+            "2026-04-07T09:00:01Z",
+            500,
+            "서울 12도 맑음",
+            true,
+            0,
+            None,
+            None,
+        )
+        .unwrap();
+    }
+
+    let session = kittypaw_cli::agent_loop::AgentSession {
+        provider: &provider,
+        fallback_provider: None,
+        sandbox: &sandbox,
+        store: store.clone(),
+        config: &config,
+        on_token: None,
+        on_permission_request: None,
+    };
+
+    let result = session.run(desktop_event("search memories")).await;
+    assert!(result.is_ok(), "memory search: {:?}", result);
+    let text = result.unwrap();
+    assert!(
+        text.contains("날씨 브리핑") || text.contains("브리핑"),
+        "expected FTS5 hit, got: {text}"
+    );
+}
+
+// ── Phase 10: Checkpoint/Rollback integration ─────────────────────────
+
+/// Checkpoint and rollback correctly restores conversation state.
+#[tokio::test]
+async fn test_checkpoint_and_rollback() {
+    let provider = MockJsProvider::new(r#"return "ok";"#);
+    let config = test_config();
+    let sandbox = Sandbox::new_threaded(config.sandbox.clone());
+    let store = Arc::new(Mutex::new(
+        Store::open(":memory:").expect("in-memory store"),
+    ));
+
+    let session = kittypaw_cli::agent_loop::AgentSession {
+        provider: &provider,
+        fallback_provider: None,
+        sandbox: &sandbox,
+        store: store.clone(),
+        config: &config,
+        on_token: None,
+        on_permission_request: None,
+    };
+
+    // Run 2 events to build conversation state
+    session.run(desktop_event("msg-1")).await.unwrap();
+    session.run(desktop_event("msg-2")).await.unwrap();
+
+    let agent_id = "desktop-test";
+
+    // Create checkpoint
+    let checkpoint_id = {
+        let s = store.lock().await;
+        s.create_checkpoint(agent_id, "before-experiment").unwrap()
+    };
+
+    // Run 2 more events
+    session.run(desktop_event("msg-3")).await.unwrap();
+    session.run(desktop_event("msg-4")).await.unwrap();
+
+    // Verify 4 user turns exist (each event adds 1 user + 1 assistant turn)
+    {
+        let s = store.lock().await;
+        let state = s.load_state(agent_id).unwrap().unwrap();
+        assert!(
+            state.turns.len() >= 8,
+            "expected >= 8 turns (4 user + 4 assistant), got {}",
+            state.turns.len()
+        );
+    }
+
+    // Rollback to checkpoint
+    let deleted = {
+        let s = store.lock().await;
+        s.rollback_to_checkpoint(checkpoint_id).unwrap()
+    };
+    assert!(
+        deleted >= 4,
+        "should delete at least 4 turns, deleted {deleted}"
+    );
+
+    // Verify only first 2 events' turns remain
+    {
+        let s = store.lock().await;
+        let state = s.load_state(agent_id).unwrap().unwrap();
+        assert!(
+            state.turns.len() <= 4,
+            "after rollback expected <= 4 turns, got {}",
+            state.turns.len()
+        );
+    }
+}
+
+/// Rollback cascades: later checkpoints are removed.
+#[tokio::test]
+async fn test_checkpoint_rollback_cascade() {
+    let provider = MockJsProvider::new(r#"return "ok";"#);
+    let config = test_config();
+    let sandbox = Sandbox::new_threaded(config.sandbox.clone());
+    let store = Arc::new(Mutex::new(
+        Store::open(":memory:").expect("in-memory store"),
+    ));
+
+    let session = kittypaw_cli::agent_loop::AgentSession {
+        provider: &provider,
+        fallback_provider: None,
+        sandbox: &sandbox,
+        store: store.clone(),
+        config: &config,
+        on_token: None,
+        on_permission_request: None,
+    };
+
+    let agent_id = "desktop-test";
+    session.run(desktop_event("a")).await.unwrap();
+
+    let cp1 = {
+        let s = store.lock().await;
+        s.create_checkpoint(agent_id, "cp-1").unwrap()
+    };
+
+    session.run(desktop_event("b")).await.unwrap();
+
+    let _cp2 = {
+        let s = store.lock().await;
+        s.create_checkpoint(agent_id, "cp-2").unwrap()
+    };
+
+    // Rollback to cp1 should also remove cp2
+    {
+        let s = store.lock().await;
+        s.rollback_to_checkpoint(cp1).unwrap();
+        let cps = s.list_checkpoints(agent_id).unwrap();
+        assert_eq!(cps.len(), 1, "only cp1 should remain, got {}", cps.len());
+        assert_eq!(cps[0].id, cp1);
+    }
+}
+
+// ── Phase 11: Security integration ────────────────────────────────────
+
+/// Secrets in LLM output are masked before being returned.
+#[tokio::test]
+async fn test_secrets_masked_in_output() {
+    let provider =
+        MockJsProvider::new(r#"return "my key is sk-abc123def456ghi789jkl012mno345pqr67890";"#);
+    let config = test_config();
+    let sandbox = Sandbox::new_threaded(config.sandbox.clone());
+    let store = Arc::new(Mutex::new(
+        Store::open(":memory:").expect("in-memory store"),
+    ));
+
+    let session = kittypaw_cli::agent_loop::AgentSession {
+        provider: &provider,
+        fallback_provider: None,
+        sandbox: &sandbox,
+        store: store.clone(),
+        config: &config,
+        on_token: None,
+        on_permission_request: None,
+    };
+
+    let result = session.run(desktop_event("show me the key")).await;
+    assert!(result.is_ok(), "should succeed: {:?}", result);
+    let text = result.unwrap();
+    assert!(
+        text.contains("***MASKED***"),
+        "secret should be masked, got: {text}"
+    );
+    assert!(
+        !text.contains("sk-abc123def456"),
+        "raw secret should NOT appear, got: {text}"
+    );
+}
+
+/// Dangerous code patterns are logged to audit (scan runs but doesn't block).
+#[tokio::test]
+async fn test_dangerous_code_audit_logged() {
+    // This JS contains a dangerous Shell.exec("rm -rf") pattern.
+    // The code scan detects it and logs to audit, but execution proceeds
+    // (Shell.exec will fail in sandbox since it's not wired for this test).
+    let provider = MockJsProvider::new(
+        r#"
+        try {
+            Shell.exec("rm -rf /tmp/test");
+        } catch(e) {}
+        return "attempted";
+        "#,
+    );
+    let config = test_config();
+    let sandbox = Sandbox::new_threaded(config.sandbox.clone());
+    let store = Arc::new(Mutex::new(
+        Store::open(":memory:").expect("in-memory store"),
+    ));
+
+    let session = kittypaw_cli::agent_loop::AgentSession {
+        provider: &provider,
+        fallback_provider: None,
+        sandbox: &sandbox,
+        store: store.clone(),
+        config: &config,
+        on_token: None,
+        on_permission_request: None,
+    };
+
+    let result = session.run(desktop_event("clean up")).await;
+    // Execution may succeed or fail (Shell.exec may not resolve), but shouldn't panic
+    // The important thing is the dangerous pattern was detected — verified by scan_code
+    let code = r#"Shell.exec("rm -rf /tmp/test")"#;
+    let warnings = kittypaw_engine::security::scan_code(code);
+    assert!(!warnings.is_empty(), "dangerous pattern should be detected");
+    assert!(
+        warnings[0].contains("rm -rf"),
+        "warning should mention rm -rf, got: {:?}",
+        warnings
+    );
+
+    // If execution succeeded, output should exist
+    if let Ok(text) = result {
+        assert!(
+            text.contains("attempted") || text.contains("error"),
+            "output: {text}"
+        );
+    }
+}

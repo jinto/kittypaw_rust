@@ -352,6 +352,7 @@ fn is_read_only_skill_call(call: &SkillCall) -> bool {
             | ("Git", "diff")
             | ("Git", "log")
             | ("Memory", "recall")
+            | ("Memory", "search")
     )
 }
 
