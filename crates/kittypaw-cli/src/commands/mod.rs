@@ -7,3 +7,4 @@ pub(crate) mod install;
 pub(crate) mod remote;
 pub(crate) mod serve;
 pub(crate) mod skills;
+pub(crate) mod suggestions;

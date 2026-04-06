@@ -281,10 +281,10 @@ pub fn Dashboard() -> Element {
                                     style: "background: #F59E0B; border: none; border-radius: 6px; padding: 4px 10px; font-size: 12px; color: #FFFFFF; cursor: pointer; margin-right: 6px;",
                                     onclick: move |_| {
                                         let store = app_state_accept.store.clone();
-                                        let key = format!("schedule_accepted:{}", skill_id_accept);
+                                        let sid = skill_id_accept.clone();
                                         spawn(async move {
                                             let s = store.lock().await;
-                                            let _ = s.set_user_context(&key, "true", "user");
+                                            let _ = s.accept_suggestion(&sid);
                                         });
                                         schedule_suggestions_accept.write().retain(|(id, _)| id != &skill_id_accept2);
                                     },

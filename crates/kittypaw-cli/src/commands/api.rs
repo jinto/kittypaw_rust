@@ -95,6 +95,15 @@ pub(crate) fn build_api_router(api_key: &str, state: ApiState) -> Option<Router>
         .route("/api/v1/skills/{name}", delete(api_skills_delete))
         .route("/api/v1/chat", post(api_chat))
         .route("/api/v1/config/check", get(api_config_check))
+        .route("/api/v1/suggestions", get(api_suggestions_list))
+        .route(
+            "/api/v1/suggestions/{skill_id}/accept",
+            post(api_suggestions_accept),
+        )
+        .route(
+            "/api/v1/suggestions/{skill_id}/dismiss",
+            post(api_suggestions_dismiss),
+        )
         .route("/api/v1/users/link", post(api_users_link))
         .route("/api/v1/users/{id}/identities", get(api_users_identities))
         .route(
@@ -348,6 +357,62 @@ async fn api_config_check(State(st): State<ApiState>) -> Json<Value> {
             "daily_token_limit": st.config.features.daily_token_limit,
         }
     }))
+}
+
+// ── Suggestion endpoints ─────────────────────────────────────────────
+
+async fn api_suggestions_list(State(st): State<ApiState>) -> Json<Value> {
+    let s = st.store.lock().await;
+    match s.pending_suggestions() {
+        Ok(suggestions) => {
+            let items: Vec<Value> = suggestions
+                .iter()
+                .map(|sg| {
+                    json!({
+                        "skill_id": sg.skill_id,
+                        "skill_name": sg.skill_name,
+                        "suggested_cron": sg.suggested_cron,
+                        "suggestion_type": sg.suggestion_type,
+                    })
+                })
+                .collect();
+            Json(json!(items))
+        }
+        Err(e) => Json(json!({"error": format!("{e}")})),
+    }
+}
+
+async fn api_suggestions_accept(
+    State(st): State<ApiState>,
+    Path(skill_id): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    let s = st.store.lock().await;
+    match s.accept_suggestion(&skill_id) {
+        Ok(Some(cron)) => (
+            StatusCode::OK,
+            Json(json!({"accepted": true, "skill_id": skill_id, "cron": cron})),
+        ),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "no pattern detected for this skill"})),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("{e}")})),
+        ),
+    }
+}
+
+async fn api_suggestions_dismiss(
+    State(st): State<ApiState>,
+    Path(skill_id): Path<String>,
+) -> Json<Value> {
+    let s = st.store.lock().await;
+    let key = format!("suggest_dismissed:{}", skill_id);
+    match s.set_user_context(&key, "1", "user") {
+        Ok(()) => Json(json!({"dismissed": true, "skill_id": skill_id})),
+        Err(e) => Json(json!({"error": format!("{e}")})),
+    }
 }
 
 // ── User identity endpoints ───────────────────────────────────────────

@@ -80,6 +80,11 @@ enum Commands {
         /// Keyword to search for
         keyword: String,
     },
+    /// View and manage auto-detected skill suggestions
+    Suggestions {
+        #[command(subcommand)]
+        command: SuggestionsCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -118,6 +123,22 @@ enum ConfigCommands {
 enum AgentCommands {
     /// List configured agents with their skills
     List,
+}
+
+#[derive(Subcommand)]
+enum SuggestionsCommands {
+    /// List pending suggestions
+    List,
+    /// Accept a suggestion (converts skill to scheduled)
+    Accept {
+        /// Skill ID to accept
+        skill_id: String,
+    },
+    /// Dismiss a suggestion
+    Dismiss {
+        /// Skill ID to dismiss
+        skill_id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -251,6 +272,15 @@ async fn main() {
         Some(Commands::Search { keyword }) => {
             commands::install::run_search(&keyword).await;
         }
+        Some(Commands::Suggestions { command }) => match command {
+            SuggestionsCommands::List => commands::suggestions::run_suggestions_list(),
+            SuggestionsCommands::Accept { skill_id } => {
+                commands::suggestions::run_suggestions_accept(&skill_id)
+            }
+            SuggestionsCommands::Dismiss { skill_id } => {
+                commands::suggestions::run_suggestions_dismiss(&skill_id)
+            }
+        },
         None => {
             commands::chat::run_stdin().await;
         }

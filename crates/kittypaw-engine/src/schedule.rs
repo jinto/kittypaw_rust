@@ -453,6 +453,36 @@ fn handle_run_success(
             let _ = store.set_user_context(&ctx_key, &value, "pattern");
         }
     }
+
+    // Detect time patterns and notify once
+    let notified_key = format!("suggest_notified:{}", id);
+    let dismissed_key = format!("suggest_dismissed:{}", id);
+    let accepted_key = format!("schedule_accepted:{}", id);
+    let already_handled = store
+        .get_user_context(&notified_key)
+        .ok()
+        .flatten()
+        .is_some()
+        || store
+            .get_user_context(&dismissed_key)
+            .ok()
+            .flatten()
+            .is_some()
+        || store
+            .get_user_context(&accepted_key)
+            .ok()
+            .flatten()
+            .is_some();
+    if !already_handled {
+        if let Ok(Some(_cron)) = store.detect_time_pattern(id) {
+            notifier.send(&format!(
+                "💡 *{}* — 일정한 패턴으로 실행하고 계시네요. 자동 스케줄로 전환할까요?\n\
+                 `kittypaw suggestions accept {}`",
+                name, id
+            ));
+            let _ = store.set_user_context(&notified_key, "1", "pattern");
+        }
+    }
 }
 
 /// Attempt to auto-fix a broken skill using LLM code generation.

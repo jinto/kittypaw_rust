@@ -1,5 +1,15 @@
 use super::*;
 
+/// A pending suggestion detected from execution patterns.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Suggestion {
+    pub skill_id: String,
+    pub skill_name: String,
+    pub suggested_cron: String,
+    /// "time_pattern" or "weekday_pattern"
+    pub suggestion_type: String,
+}
+
 impl Store {
     /// Get a user context value by key
     pub fn get_user_context(&self, key: &str) -> Result<Option<String>> {
@@ -156,11 +166,121 @@ impl Store {
                 })
                 .count() as u32;
             if window_count >= 3 {
-                // Suggest a daily cron at this hour
+                // Check day-of-week clustering before defaulting to daily
+                let weekdays: Vec<u32> = times
+                    .iter()
+                    .filter_map(|s| {
+                        // Parse date part and compute weekday (0=Sun..6=Sat)
+                        if s.len() < 10 {
+                            return None;
+                        }
+                        let date_part = &s[..10]; // "YYYY-MM-DD"
+                        let parts: Vec<&str> = date_part.split('-').collect();
+                        if parts.len() != 3 {
+                            return None;
+                        }
+                        let (y, m, d) = (
+                            parts[0].parse::<i32>().ok()?,
+                            parts[1].parse::<u32>().ok()?,
+                            parts[2].parse::<u32>().ok()?,
+                        );
+                        // Zeller-like: chrono-free weekday calculation
+                        // Using Tomohiko Sakamoto's algorithm
+                        let t = [0u32, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
+                        let y = if m < 3 { y - 1 } else { y };
+                        let dow = ((y + y / 4 - y / 100
+                            + y / 400
+                            + t[(m - 1) as usize] as i32
+                            + d as i32)
+                            % 7) as u32;
+                        Some(dow)
+                    })
+                    .collect();
+
+                // Count weekday occurrences
+                let mut dow_counts: std::collections::HashMap<u32, u32> =
+                    std::collections::HashMap::new();
+                for &wd in &weekdays {
+                    *dow_counts.entry(wd).or_insert(0) += 1;
+                }
+
+                // If 3+ executions on the same weekday, suggest weekday-specific cron
+                if let Some((&dominant_dow, &count)) = dow_counts.iter().max_by_key(|(_, c)| *c) {
+                    if count >= 3 {
+                        // Sakamoto returns 0=Sun..6=Sat; cron 0.16 uses same convention
+                        return Ok(Some(format!("0 0 {} * * {}", base_hour, dominant_dow)));
+                    }
+                }
+
+                // Otherwise suggest daily
                 return Ok(Some(format!("0 0 {} * * *", base_hour)));
             }
         }
 
         Ok(None)
+    }
+
+    /// List all pending suggestions (not yet accepted or dismissed).
+    pub fn pending_suggestions(&self) -> Result<Vec<Suggestion>> {
+        // Get unique skill IDs from recent executions (most recently active first)
+        let mut stmt = self.conn.prepare(
+            "SELECT skill_id, skill_name FROM execution_history \
+             WHERE rowid IN (SELECT MAX(rowid) FROM execution_history GROUP BY skill_id) \
+             ORDER BY started_at DESC LIMIT 50",
+        )?;
+        let skills: Vec<(String, String)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        let mut suggestions = Vec::new();
+        for (skill_id, skill_name) in skills {
+            // Skip already dismissed or accepted
+            let dismiss_key = format!("suggest_dismissed:{}", skill_id);
+            let accept_key = format!("schedule_accepted:{}", skill_id);
+            if self.get_user_context(&dismiss_key)?.is_some()
+                || self.get_user_context(&accept_key)?.is_some()
+            {
+                continue;
+            }
+
+            if let Some(cron) = self.detect_time_pattern(&skill_id)? {
+                let stype = if cron.matches(' ').count() == 5 && !cron.ends_with("* *") {
+                    "weekday_pattern"
+                } else {
+                    "time_pattern"
+                };
+                suggestions.push(Suggestion {
+                    skill_id,
+                    skill_name,
+                    suggested_cron: cron,
+                    suggestion_type: stype.into(),
+                });
+            }
+        }
+        Ok(suggestions)
+    }
+
+    /// Accept a suggestion: update the skill's trigger to schedule with the detected cron.
+    /// Returns the applied cron string, or None if no pattern found.
+    pub fn accept_suggestion(&self, skill_id: &str) -> Result<Option<String>> {
+        let cron = match self.detect_time_pattern(skill_id)? {
+            Some(c) => c,
+            None => return Ok(None),
+        };
+
+        // Load the skill, update trigger, save
+        if let Some((mut skill, js_code)) = kittypaw_core::skill::load_skill(skill_id)? {
+            skill.trigger.trigger_type = "schedule".into();
+            skill.trigger.cron = Some(cron.clone());
+            kittypaw_core::skill::save_skill(&skill, &js_code)?;
+        } else {
+            return Ok(None); // skill no longer exists on disk
+        }
+
+        // Mark as accepted
+        let key = format!("schedule_accepted:{}", skill_id);
+        self.set_user_context(&key, &cron, "auto")?;
+
+        Ok(Some(cron))
     }
 }

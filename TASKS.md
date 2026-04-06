@@ -129,7 +129,7 @@
 ### 세션간 기억 ✅
 - [x] FTS5 전문 검색 (execution_fts 가상 테이블 + search_executions)
 - [ ] LLM 요약 (v3로 이동)
-- [ ] 사용 패턴 기반 스킬 추천 (v1에서 detect_time_pattern으로 일부 구현)
+- [x] 사용 패턴 기반 스킬 추천 (v2 Phase 7: CLI/API/채널 알림 + accept→실제 스케줄 생성)
 
 ### 멀티채널 — 결과 알림으로
 - [x] Slack 채널 어댑터 (Channel trait + skill executor + Settings UI)

@@ -18,6 +18,8 @@ pub mod identity;
 mod permission;
 mod storage;
 
+pub use context::Suggestion;
+
 pub struct Store {
     conn: Connection,
 }
