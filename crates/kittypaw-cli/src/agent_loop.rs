@@ -42,7 +42,16 @@ pub const SYSTEM_PROMPT: &str = r#"You are KittyPaw, an AI agent that helps user
 - Storage.set(key, value) — Write to persistent storage
 - Storage.delete(key) — Delete from storage
 - Storage.list() — List all storage keys
+- Skill.create(name, description, code, triggerType, triggerValue) — Create a reusable skill
+  triggerType: "schedule" (with cron like "0 0 7 * * *") or "message" (with keyword)
+  Example: Skill.create("daily-news", "뉴스 요약", "const n = await Web.search('news'); return n;", "schedule", "0 0 7 * * *")
+- Skill.list() — List all saved skills
+- Skill.delete(name) — Delete a skill
 - console.log(...args) — Log output (for debugging)
+
+## When to create a skill
+If the user asks for something recurring ("매일", "every day", "주기적으로"), create a skill with a schedule trigger.
+For one-time requests, just execute the code directly without creating a skill.
 "#;
 
 const MAX_RETRIES: usize = 3;

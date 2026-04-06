@@ -7,6 +7,7 @@ mod http;
 mod llm;
 mod process;
 mod shell;
+mod skill_mgmt;
 mod slack;
 mod storage;
 mod telegram;
@@ -472,6 +473,7 @@ async fn execute_single_call(
         "Shell" => shell::execute_shell(call).await,
         "Git" => git::execute_git(call).await,
         "Agent" => agent::execute_agent(call, config).await,
+        "Skill" => skill_mgmt::execute_skill_mgmt(call).await,
         _ => Err(KittypawError::CapabilityDenied(format!(
             "Unknown skill: {}",
             call.skill_name
