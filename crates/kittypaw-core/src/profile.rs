@@ -99,6 +99,46 @@ pub fn resolve_profile_name(
     config.default_profile.clone()
 }
 
+/// Extract keys from USER.md content.
+///
+/// Parses `- key: value` lines and returns a set of keys.
+/// Uses `": "` separator to avoid false matches on keys containing colons.
+pub fn extract_user_md_keys(user_md: &str) -> std::collections::HashSet<String> {
+    user_md
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.strip_prefix("- ")?;
+            let colon = trimmed.find(": ")?;
+            Some(trimmed[..colon].to_string())
+        })
+        .collect()
+}
+
+/// Update or append a key-value entry in USER.md content.
+///
+/// Replaces the line if `key` already exists, otherwise appends.
+/// Normalizes trailing newlines to prevent accumulation.
+pub fn update_user_md_entry(user_md: &mut String, key: &str, value: &str) {
+    let line = format!("- {key}: {value}");
+    let key_prefix = format!("- {key}: ");
+    if let Some(pos) = user_md.find(&key_prefix) {
+        let end = user_md[pos..]
+            .find('\n')
+            .map(|i| pos + i + 1)
+            .unwrap_or(user_md.len());
+        user_md.replace_range(pos..end, &format!("{line}\n"));
+    } else {
+        if !user_md.is_empty() && !user_md.ends_with('\n') {
+            user_md.push('\n');
+        }
+        user_md.push_str(&format!("{line}\n"));
+    }
+    // Normalize: remove trailing blank lines
+    while user_md.ends_with("\n\n") {
+        user_md.pop();
+    }
+}
+
 /// Find a profile by nick name (for natural language switching).
 pub fn find_profile_by_nick<'a>(config: &'a Config, nick: &str) -> Option<&'a str> {
     config

@@ -598,13 +598,13 @@ fn build_prompt(
     }];
 
     // Inject profile (SOUL.md + USER.md)
+    let profile_name = kittypaw_core::profile::resolve_profile_name(
+        app_config,
+        channel_type,
+        active_profile_override,
+    );
+    let profile = kittypaw_core::profile::load_profile(&profile_name);
     {
-        let profile_name = kittypaw_core::profile::resolve_profile_name(
-            app_config,
-            channel_type,
-            active_profile_override,
-        );
-        let profile = kittypaw_core::profile::load_profile(&profile_name);
         let nick = app_config
             .profiles
             .iter()
@@ -633,11 +633,45 @@ fn build_prompt(
     }
 
     // Inject memory context (user facts, recent failures, today's stats)
+    // Dedup: remove DB entries whose keys already appear in USER.md
     if !memory_context.is_empty() {
-        messages.push(LlmMessage {
-            role: Role::System,
-            content: memory_context.join("\n\n"),
-        });
+        let user_keys = kittypaw_core::profile::extract_user_md_keys(&profile.user_md);
+        let deduped: Vec<String> = if user_keys.is_empty() {
+            memory_context.to_vec()
+        } else {
+            memory_context
+                .iter()
+                .map(|section| {
+                    if !section.starts_with("## Remembered Facts") {
+                        return section.clone();
+                    }
+                    let lines: Vec<&str> = section
+                        .lines()
+                        .filter(|line| {
+                            if let Some(rest) = line.strip_prefix("- ") {
+                                if let Some(colon) = rest.find(": ") {
+                                    return !user_keys.contains(&rest[..colon]);
+                                }
+                            }
+                            true // keep header and non-kv lines
+                        })
+                        .collect();
+                    // If only the header remains, skip the section
+                    if lines.len() <= 1 {
+                        String::new()
+                    } else {
+                        lines.join("\n")
+                    }
+                })
+                .filter(|s| !s.is_empty())
+                .collect()
+        };
+        if !deduped.is_empty() {
+            messages.push(LlmMessage {
+                role: Role::System,
+                content: deduped.join("\n\n"),
+            });
+        }
     }
 
     // Inject connected channel info so LLM can use Telegram/Slack/Discord directly

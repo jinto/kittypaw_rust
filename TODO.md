@@ -1,6 +1,6 @@
 # 할 일
 
-- [ ] **메모리 레이어 충돌 해결 정책** — USER.md(Layer 1)와 user_context DB(Layer 2)에 같은 fact가 다른 값으로 존재할 때의 처리. 후보: (A) write-through (Memory.save 시 USER.md도 동기화), (B) read-time conflict detection (프롬프트 빌드 시 불일치 감지 → 사용자에게 확인 요청), (C) 현상 유지 (LLM이 최신 값 우선 판단)
+- [x] **메모리 레이어 충돌 해결 정책** — 양방향 write-through (save→USER.md, user→DB) + 프롬프트 dedup (Remembered Facts에서 USER.md 키 제외)
 - [ ] **온보딩에 검색 API 키 설정 추가** — Web.search 백엔드(Brave/Tavily/Exa) API 키를 온보딩 위자드에서 입력받도록. 키 없으면 DuckDuckGo fallback(제한적) 안내.
 - [x] **Telegram 메시지 길이 제한 처리** — split_telegram_text() 순수 함수로 4096자 자동 분할. core/engine/channels 3곳 적용.
 - [x] **Web.search 쿼리 언어 매칭** — SYSTEM_PROMPT에 "사용자 언어와 같은 언어로 검색 쿼리 생성" 가이드 추가.
