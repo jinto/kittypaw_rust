@@ -65,7 +65,7 @@ Available actions:
 - `{"action": "reply", "text": "..."}` — Say something to the user
 - `{"action": "search_registry", "query": "..."}` — Search for existing skills (use keywords)
 - `{"action": "recommend_skill", "skill_id": "...", "reason": "..."}` — Recommend a found skill
-- `{"action": "create_skill", "description": "...", "schedule": "cron expression or null"}` — Create a new automation
+- `{"action": "create_skill", "description": "...", "schedule": "every 10m | every 2h | */10 * * * * | null"}` — Create a new automation
 - `{"action": "save_preference", "key": "...", "value": "..."}` — Remember something about the user
 - `{"action": "ask_question", "question": "...", "options": ["A", "B", ...]}` — Ask for clarification
 
@@ -172,18 +172,14 @@ async fn execute_actions(
                 }
 
                 let chat_id = extract_chat_id(ctx.event);
-                let full_description = if let Some(ref sched) = schedule {
-                    format!("{description} (schedule: {sched})")
-                } else {
-                    description.clone()
-                };
 
                 match teach_loop::handle_teach(
-                    &full_description,
+                    &description,
                     &chat_id,
                     ctx.provider,
                     ctx.sandbox,
                     ctx.config,
+                    schedule.as_deref(),
                 )
                 .await
                 {

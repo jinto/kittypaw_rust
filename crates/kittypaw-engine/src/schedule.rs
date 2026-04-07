@@ -570,8 +570,15 @@ async fn attempt_auto_fix(
         error_msg, skill_id, old_code
     );
 
-    match crate::teach_loop::handle_teach(&fix_prompt, "auto-fix", &*provider, sandbox, config)
-        .await
+    match crate::teach_loop::handle_teach(
+        &fix_prompt,
+        "auto-fix",
+        &*provider,
+        sandbox,
+        config,
+        None,
+    )
+    .await
     {
         Ok(ref result @ crate::teach_loop::TeachResult::Generated { ref code, .. }) => {
             let new_code = code.clone();

@@ -55,6 +55,7 @@ pub async fn handle_teach(
     provider: &dyn LlmProvider,
     sandbox: &Sandbox,
     config: &Config,
+    schedule: Option<&str>,
 ) -> Result<TeachResult> {
     // Admin check: Desktop/CLI (chat_id starts with "session_" or is empty) always allowed.
     // Remote channels require explicit admin_chat_ids config.
@@ -94,24 +95,27 @@ pub async fn handle_teach(
     let wrapped = format!("const ctx = JSON.parse(__context__);\n{code}");
     let exec_result = sandbox.execute(&wrapped, mock_context).await?;
 
+    // Dry-run failures are non-fatal — the code may call external APIs
+    // (Web.search, Telegram.sendMessage) unavailable in dry-run sandbox.
     if !exec_result.success {
         let err_msg = exec_result
             .error
             .unwrap_or_else(|| "Unknown sandbox error".into());
-        return Ok(TeachResult::Error(format!(
-            "Generated code failed dry-run: {err_msg}"
-        )));
+        tracing::warn!("Dry-run failed (non-fatal): {err_msg}");
     }
 
     // Derive skill metadata
     let skill_name = slugify_description(teach_text);
     let permissions = detect_permissions(&code);
-    let is_schedule = detect_schedule(teach_text);
-    let trigger = if is_schedule {
+
+    // Schedule: LLM provides the schedule string directly (Hermes style).
+    // parse_schedule() handles "every 10m", "every 2h", 5-field cron, etc.
+    let trigger = if let Some(sched) = schedule.filter(|s| !s.is_empty()) {
+        let cron_expr = parse_schedule(sched)?;
         SkillTrigger {
             trigger_type: "schedule".into(),
             keyword: None,
-            cron: None,
+            cron: Some(cron_expr),
             natural: Some(teach_text.to_string()),
         }
     } else {
@@ -198,55 +202,60 @@ fn slugify_description(text: &str) -> String {
     }
 }
 
-fn detect_schedule(text: &str) -> bool {
-    let lower = text.to_lowercase();
-    const SCHEDULE_KEYWORDS: &[&str] = &[
-        "every day",
-        "every morning",
-        "every evening",
-        "every night",
-        "every hour",
-        "every minute",
-        "daily",
-        "hourly",
-        "weekly",
-        "monthly",
-        "at midnight",
-        "at noon",
-        "every monday",
-        "every tuesday",
-        "every wednesday",
-        "every thursday",
-        "every friday",
-        "every saturday",
-        "every sunday",
-        "once a day",
-        "once a week",
-        "once a month",
-        "every week",
-        "every month",
-        "scheduled",
-        "cron",
-        // Korean keywords
-        "매일",
-        "매시간",
-        "매주",
-        "매월",
-        "아침",
-        "저녁",
-        "밤",
-        "월요일",
-        "화요일",
-        "수요일",
-        "목요일",
-        "금요일",
-        "토요일",
-        "일요일",
-        "하루에",
-        "시간마다",
-        "분마다",
-    ];
-    SCHEDULE_KEYWORDS.iter().any(|kw| lower.contains(kw))
+/// Parse a schedule string into a 7-field cron expression (Hermes style).
+///
+/// Accepts:
+/// - Interval shorthand: "every 10m", "every 2h", "every 1d"
+/// - Standard 5-field cron: "*/10 * * * *" (auto-prepends seconds)
+/// - 6/7-field cron: "0 */10 * * * *" (passed through)
+///
+/// Returns a 6-field cron expression compatible with `cron` crate 0.16
+/// (sec min hour dom mon dow).
+pub fn parse_schedule(schedule: &str) -> Result<String> {
+    let s = schedule.trim().to_lowercase();
+
+    // "every Xm", "every Xh", "every Xd"
+    let interval_re = regex::Regex::new(
+        r"^every\s+(\d+)\s*(m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days)$",
+    )
+    .unwrap();
+    if let Some(caps) = interval_re.captures(&s) {
+        let value: u32 = caps[1].parse().unwrap_or(1);
+        let unit = &caps[2][..1]; // m, h, or d
+        return match unit {
+            "m" => {
+                let n = value.max(5);
+                Ok(format!("0 */{n} * * * *"))
+            }
+            "h" => Ok(format!("0 0 */{value} * * *")),
+            "d" => Ok("0 0 9 * * *".to_string()), // daily at 9am
+            _ => unreachable!(),
+        };
+    }
+
+    // Cron expression: count fields to determine format
+    let fields: Vec<&str> = s.split_whitespace().collect();
+    if fields.len() >= 5
+        && fields
+            .iter()
+            .take(6)
+            .all(|f| f.chars().all(|c| c.is_ascii_digit() || "*/,-".contains(c)))
+    {
+        let expr = match fields.len() {
+            5 => format!("0 {s}"),  // 5-field → prepend seconds
+            6 | 7 => s.to_string(), // already has seconds
+            _ => s.to_string(),
+        };
+        // Validate with cron crate
+        use std::str::FromStr;
+        cron::Schedule::from_str(&expr)
+            .map_err(|e| KittypawError::Config(format!("Invalid cron: {e}")))?;
+        return Ok(expr);
+    }
+
+    Err(KittypawError::Config(format!(
+        "Invalid schedule: '{schedule}'. Use 'every 10m', 'every 2h', or cron like '*/10 * * * *'"
+    )))
 }
 
 /// Validate generated code for dangerous patterns.
@@ -342,14 +351,29 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_schedule_korean() {
-        assert!(detect_schedule("매일 아침 날씨 알려줘"));
-        assert!(detect_schedule("매주 월요일에 보고서 보내줘"));
-        assert!(detect_schedule("매시간마다 체크해줘"));
-        assert!(detect_schedule("하루에 한 번 실행해줘"));
-        assert!(detect_schedule("분마다 확인해줘"));
-        assert!(detect_schedule("저녁에 알람 보내줘"));
-        assert!(detect_schedule("토요일마다 정리해줘"));
-        assert!(!detect_schedule("날씨 알려줘"));
+    fn test_parse_schedule_interval() {
+        assert_eq!(parse_schedule("every 10m").unwrap(), "0 */10 * * * *");
+        assert_eq!(parse_schedule("every 2h").unwrap(), "0 0 */2 * * *");
+        assert_eq!(parse_schedule("every 1d").unwrap(), "0 0 9 * * *");
+        // minimum 5 minutes
+        assert_eq!(parse_schedule("every 3m").unwrap(), "0 */5 * * * *");
+    }
+
+    #[test]
+    fn test_parse_schedule_cron_5field() {
+        let result = parse_schedule("*/10 * * * *").unwrap();
+        assert_eq!(result, "0 */10 * * * *");
+    }
+
+    #[test]
+    fn test_parse_schedule_cron_6field() {
+        let result = parse_schedule("0 */10 * * * *").unwrap();
+        assert_eq!(result, "0 */10 * * * *");
+    }
+
+    #[test]
+    fn test_parse_schedule_invalid() {
+        assert!(parse_schedule("banana").is_err());
+        assert!(parse_schedule("").is_err());
     }
 }

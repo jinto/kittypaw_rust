@@ -267,6 +267,7 @@ async fn api_skills_teach(
         &*st.provider,
         &st.sandbox,
         &st.config,
+        None,
     )
     .await
     {

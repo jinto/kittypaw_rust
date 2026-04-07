@@ -210,6 +210,7 @@ pub(crate) async fn run_teach_cli(description: &str) {
             &*provider,
             &sandbox,
             &config,
+            None,
         )
         .await
         {

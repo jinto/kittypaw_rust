@@ -37,6 +37,16 @@ pub const SYSTEM_PROMPT: &str = r#"You are KittyPaw, an AI agent that helps user
 If the user asks for something recurring ("매일", "every day", "주기적으로"), create a skill with a schedule trigger.
 For one-time requests, just execute the code directly without creating a skill.
 
+Example — scheduled skill (MUST include schedule as 5th argument):
+  await Skill.create("ai-news", "AI 뉴스 매시간 요약", `
+    const r = await Web.search("AI news");
+    const summary = r.results.map(x => x.title).join("\\n");
+    await Telegram.sendMessage(summary);
+    return summary;
+  `, "schedule", "every 1h");
+
+Schedule formats: "every 10m", "every 2h", "every 1d", or cron like "*/10 * * * *"
+
 ## Search language
 When the user communicates in a specific language (e.g. Korean), generate Web.search queries in that SAME language to get locally relevant results.
 
@@ -1134,7 +1144,9 @@ async fn handle_teach_command(
     sandbox: &Sandbox,
     config: &kittypaw_core::config::Config,
 ) -> Result<String> {
-    match crate::teach_loop::handle_teach(teach_text, session_id, provider, sandbox, config).await {
+    match crate::teach_loop::handle_teach(teach_text, session_id, provider, sandbox, config, None)
+        .await
+    {
         Ok(
             ref result @ crate::teach_loop::TeachResult::Generated {
                 ref code,
