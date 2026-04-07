@@ -174,7 +174,14 @@ pub(crate) fn run_child_async(
                            {name}[k] = async function() {{\n\
                              const r = await _orig.apply(this, arguments);\n\
                              if (r === null || r === undefined || r === 'null') return null;\n\
-                             try {{ return JSON.parse(r); }} catch(e) {{ return r; }}\n\
+                             try {{\n\
+                               const parsed = JSON.parse(r);\n\
+                               if (parsed && parsed._error) throw new Error(parsed.error || 'unknown');\n\
+                               return parsed;\n\
+                             }} catch(e) {{\n\
+                               if (e instanceof Error) throw e;\n\
+                               return r;\n\
+                             }}\n\
                            }};\n\
                          }}"
                     )

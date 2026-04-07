@@ -37,6 +37,13 @@ pub type PermissionCallback = Arc<
 const LLM_MAX_CALLS_PER_EXECUTION: u32 = 3;
 const MAX_SKILL_RESULT_BYTES: usize = 50 * 1024;
 
+/// Serialize an error as JSON with the `_error` sentinel so the JS sandbox
+/// wrapper can detect it and `throw` instead of returning silently.
+fn skill_error_json(msg: impl std::fmt::Display) -> String {
+    serde_json::to_string(&serde_json::json!({"_error": true, "error": msg.to_string()}))
+        .unwrap_or_else(|_| r#"{"_error":true,"error":"serialization failed"}"#.to_string())
+}
+
 /// Check capability and log denial. Returns Err(message) if denied.
 fn check_capability(
     checker: &mut CapabilityChecker,
@@ -168,11 +175,11 @@ pub async fn resolve_skill_call_with_mcp(
     let result =
         resolve_skill_call_inner(call, config, store, checker, on_permission, mcp_registry).await;
     if result.len() > MAX_SKILL_RESULT_BYTES {
-        return serde_json::to_string(&serde_json::json!({
-            "error": format!("Result too large ({} bytes, limit {})", result.len(), MAX_SKILL_RESULT_BYTES),
-            "truncated": true
-        }))
-        .unwrap_or_else(|_| "null".to_string());
+        return skill_error_json(format!(
+            "Result too large ({} bytes, limit {})",
+            result.len(),
+            MAX_SKILL_RESULT_BYTES
+        ));
     }
     result
 }
@@ -189,15 +196,11 @@ async fn resolve_skill_call_inner(
         match cap.lock() {
             Ok(mut guard) => {
                 if let Err(msg) = check_capability(&mut guard, call) {
-                    return serde_json::to_string(&serde_json::json!({"error": msg}))
-                        .unwrap_or_else(|_| "null".to_string());
+                    return skill_error_json(msg);
                 }
             }
             Err(_) => {
-                return serde_json::to_string(
-                    &serde_json::json!({"error": "capability checker lock poisoned"}),
-                )
-                .unwrap_or_else(|_| "null".to_string());
+                return skill_error_json("capability checker lock poisoned");
             }
         }
     }
@@ -210,8 +213,7 @@ async fn resolve_skill_call_inner(
         }
         return match file::execute_file(call, None) {
             Ok(val) => serde_json::to_string(&val).unwrap_or_else(|_| "null".to_string()),
-            Err(e) => serde_json::to_string(&serde_json::json!({"error": e.to_string()}))
-                .unwrap_or_else(|_| "null".to_string()),
+            Err(e) => skill_error_json(e),
         };
     }
 
@@ -219,8 +221,7 @@ async fn resolve_skill_call_inner(
     if call.skill_name == "Env" {
         return match env::execute_env(call, None) {
             Ok(val) => serde_json::to_string(&val).unwrap_or_else(|_| "null".to_string()),
-            Err(e) => serde_json::to_string(&serde_json::json!({"error": e.to_string()}))
-                .unwrap_or_else(|_| "null".to_string()),
+            Err(e) => skill_error_json(e),
         };
     }
 
@@ -229,8 +230,7 @@ async fn resolve_skill_call_inner(
         let result = http::execute_web(call, &config.sandbox.allowed_hosts).await;
         return match result {
             Ok(val) => serde_json::to_string(&val).unwrap_or_else(|_| "null".to_string()),
-            Err(e) => serde_json::to_string(&serde_json::json!({"error": e.to_string()}))
-                .unwrap_or_else(|_| "null".to_string()),
+            Err(e) => skill_error_json(e),
         };
     }
 
@@ -260,8 +260,7 @@ async fn resolve_skill_call_inner(
                     .unwrap_or_else(|_| "null".to_string()),
             };
         } else {
-            return serde_json::to_string(&serde_json::json!({"error": "MCP not configured"}))
-                .unwrap_or_else(|_| "null".to_string());
+            return skill_error_json("MCP not configured");
         }
     }
 
@@ -270,8 +269,7 @@ async fn resolve_skill_call_inner(
         let s = store.lock().await;
         return match storage::execute_storage(call, &s, None) {
             Ok(val) => serde_json::to_string(&val).unwrap_or_else(|_| "null".to_string()),
-            Err(e) => serde_json::to_string(&serde_json::json!({"error": e.to_string()}))
-                .unwrap_or_else(|_| "null".to_string()),
+            Err(e) => skill_error_json(e),
         };
     }
 
@@ -280,8 +278,7 @@ async fn resolve_skill_call_inner(
         let s = store.lock().await;
         return match todo::execute_todo(call, &s) {
             Ok(val) => serde_json::to_string(&val).unwrap_or_else(|_| "null".to_string()),
-            Err(e) => serde_json::to_string(&serde_json::json!({"error": e.to_string()}))
-                .unwrap_or_else(|_| "null".to_string()),
+            Err(e) => skill_error_json(e),
         };
     }
 
@@ -290,8 +287,7 @@ async fn resolve_skill_call_inner(
         let s = store.lock().await;
         return match memory::execute_memory(call, &s, None) {
             Ok(val) => serde_json::to_string(&val).unwrap_or_else(|_| "null".to_string()),
-            Err(e) => serde_json::to_string(&serde_json::json!({"error": e.to_string()}))
-                .unwrap_or_else(|_| "null".to_string()),
+            Err(e) => skill_error_json(e),
         };
     }
 
@@ -310,8 +306,14 @@ async fn resolve_skill_call_inner(
     if result.success {
         serde_json::to_string(&result.result).unwrap_or_else(|_| "null".to_string())
     } else {
-        serde_json::to_string(&serde_json::json!({"error": result.error}))
-            .unwrap_or_else(|_| "null".to_string())
+        let msg = result.error.as_deref().unwrap_or("unknown");
+        tracing::warn!(
+            skill = %call.skill_name,
+            method = %call.method,
+            error = %msg,
+            "skill call failed (error returned to JS sandbox)"
+        );
+        skill_error_json(msg)
     }
 }
 
@@ -1134,7 +1136,7 @@ mod tests {
         let result = resolve_skill_call(&get_call, &config, &store, None, None).await;
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert!(parsed.get("error").is_some());
-        assert_eq!(parsed.get("truncated").unwrap(), true);
+        assert_eq!(parsed.get("_error").unwrap(), true);
 
         let _ = std::fs::remove_file(&path);
     }
@@ -1149,16 +1151,17 @@ mod tests {
     fn test_result_size_limit_over_threshold_returns_valid_json() {
         let large = "x".repeat(MAX_SKILL_RESULT_BYTES + 1);
         let result = if large.len() > MAX_SKILL_RESULT_BYTES {
-            serde_json::to_string(&serde_json::json!({
-                "error": format!("Result too large ({} bytes, limit {})", large.len(), MAX_SKILL_RESULT_BYTES),
-                "truncated": true
-            })).unwrap()
+            skill_error_json(format!(
+                "Result too large ({} bytes, limit {})",
+                large.len(),
+                MAX_SKILL_RESULT_BYTES
+            ))
         } else {
             large
         };
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert!(parsed.get("error").is_some());
-        assert_eq!(parsed.get("truncated").unwrap(), true);
+        assert_eq!(parsed.get("_error").unwrap(), true);
     }
 
     #[tokio::test]

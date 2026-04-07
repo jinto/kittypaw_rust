@@ -57,6 +57,56 @@ fn resolve_default_chat_id() -> Result<String> {
         })
 }
 
+/// For media methods (sendVoice, sendDocument, sendPhoto) where LLM-generated code
+/// typically omits chatId: `Method(content)`, `Method(content, caption)`,
+/// or `Method(chatId, content, caption?)`.
+/// Returns `(chat_id, content, extra)`. Auto-resolves chat_id when arg0 is not numeric.
+fn require_telegram_media_args(
+    call: &SkillCall,
+    content_name: &str,
+) -> Result<(String, String, String)> {
+    let arg = |i: usize| {
+        call.args
+            .get(i)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let is_chat_id = |s: &str| !s.is_empty() && s.parse::<i64>().is_ok();
+
+    match call.args.len() {
+        0 | 1 => {
+            let content = arg(0);
+            if content.is_empty() {
+                return Err(KittypawError::Skill(format!(
+                    "Telegram: missing {content_name}"
+                )));
+            }
+            Ok((resolve_default_chat_id()?, content, String::new()))
+        }
+        2 => {
+            let (a0, a1) = (arg(0), arg(1));
+            if is_chat_id(&a0) {
+                // Method(chatId, content)
+                Ok((a0, a1, String::new()))
+            } else {
+                // Method(content, caption) — auto chat_id
+                Ok((resolve_default_chat_id()?, a0, a1))
+            }
+        }
+        _ => {
+            // Method(chatId, content, caption)
+            let (a0, a1, a2) = (arg(0), arg(1), arg(2));
+            let chat_id = if is_chat_id(&a0) {
+                a0
+            } else {
+                resolve_default_chat_id()?
+            };
+            Ok((chat_id, a1, a2))
+        }
+    }
+}
+
 pub(super) async fn execute_telegram(
     call: &SkillCall,
     config: &Config,
@@ -90,16 +140,20 @@ pub(super) async fn execute_telegram(
             Ok(serde_json::Value::Null)
         }
         "sendPhoto" => {
-            // ABI: Telegram.sendPhoto(chatId, photoUrl)
-            let (chat_id, photo_url) = require_telegram_args(call, "photo_url")?;
+            // ABI: sendPhoto(photoUrl) / sendPhoto(photoUrl, caption) / sendPhoto(chatId, photoUrl, caption?)
+            let (chat_id, photo_url, caption) = require_telegram_media_args(call, "photo_url")?;
 
             let url = format!("https://api.telegram.org/bot{bot_token}/sendPhoto");
+            let mut payload = serde_json::json!({
+                "chat_id": chat_id,
+                "photo": photo_url,
+            });
+            if !caption.is_empty() {
+                payload["caption"] = serde_json::Value::String(caption);
+            }
             let resp = client
                 .post(&url)
-                .json(&serde_json::json!({
-                    "chat_id": chat_id,
-                    "photo": photo_url,
-                }))
+                .json(&payload)
                 .send()
                 .await
                 .map_err(|e| KittypawError::Skill(format!("Telegram API error: {e}")))?;
@@ -121,9 +175,8 @@ pub(super) async fn execute_telegram(
             Ok(body)
         }
         "sendDocument" => {
-            // ABI: Telegram.sendDocument(chatId, fileUrl, caption?)
-            let (chat_id, file_url) = require_telegram_args(call, "file_url")?;
-            let caption = call.args.get(2).and_then(|v| v.as_str()).unwrap_or("");
+            // ABI: sendDocument(fileUrl) / sendDocument(fileUrl, caption) / sendDocument(chatId, fileUrl, caption?)
+            let (chat_id, file_url, caption) = require_telegram_media_args(call, "file_url")?;
 
             let url = format!("https://api.telegram.org/bot{bot_token}/sendDocument");
             let mut payload = serde_json::json!({
@@ -131,7 +184,7 @@ pub(super) async fn execute_telegram(
                 "document": file_url,
             });
             if !caption.is_empty() {
-                payload["caption"] = serde_json::Value::String(caption.to_string());
+                payload["caption"] = serde_json::Value::String(caption);
             }
             let resp = client
                 .post(&url)
@@ -157,16 +210,22 @@ pub(super) async fn execute_telegram(
             Ok(body)
         }
         "sendVoice" => {
-            // ABI: Telegram.sendVoice(chatId, filePath, caption?)
-            let (chat_id, file_path) = require_telegram_args(call, "file_path")?;
-            let caption = call.args.get(2).and_then(|v| v.as_str()).unwrap_or("");
+            // ABI: sendVoice(filePath) / sendVoice(filePath, caption) / sendVoice(chatId, filePath, caption?)
+            let (chat_id, file_path, caption) = require_telegram_media_args(call, "file_path")?;
 
-            let file_bytes = std::fs::read(&file_path)
-                .map_err(|e| KittypawError::Skill(format!("Failed to read audio file: {e}")))?;
-            // Clean up temp TTS file after reading
-            if file_path.contains("kittypaw-tts") {
-                let _ = std::fs::remove_file(&file_path);
+            // Restrict to TTS temp directory to prevent arbitrary file exfiltration
+            let tts_dir = std::fs::canonicalize(std::env::temp_dir().join("kittypaw-tts"))
+                .unwrap_or_else(|_| std::env::temp_dir().join("kittypaw-tts"));
+            let canonical = std::fs::canonicalize(&file_path)
+                .map_err(|e| KittypawError::Skill(format!("Invalid audio path: {e}")))?;
+            if !canonical.starts_with(&tts_dir) {
+                return Err(KittypawError::Skill(
+                    "sendVoice: only TTS-generated audio files are allowed".into(),
+                ));
             }
+            let file_bytes = std::fs::read(&canonical)
+                .map_err(|e| KittypawError::Skill(format!("Failed to read audio file: {e}")))?;
+            let _ = std::fs::remove_file(&canonical);
             let file_name = std::path::Path::new(&file_path)
                 .file_name()
                 .unwrap_or_default()
@@ -175,7 +234,7 @@ pub(super) async fn execute_telegram(
 
             let url = format!("https://api.telegram.org/bot{bot_token}/sendVoice");
             let mut form = reqwest::multipart::Form::new()
-                .text("chat_id", chat_id.to_string())
+                .text("chat_id", chat_id)
                 .part(
                     "voice",
                     reqwest::multipart::Part::bytes(file_bytes)
@@ -184,7 +243,7 @@ pub(super) async fn execute_telegram(
                         .unwrap(),
                 );
             if !caption.is_empty() {
-                form = form.text("caption", caption.to_string());
+                form = form.text("caption", caption);
             }
 
             let resp = client
