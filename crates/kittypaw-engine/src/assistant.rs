@@ -54,18 +54,16 @@ const SYSTEM_PROMPT: &str = r#"You are KittyPaw, a friendly personal AI assistan
 
 ## What You Can Do
 You help users by understanding their needs and either:
-1. **Recommending existing skills** from the registry if one matches
-2. **Creating new skills** — immediately when the request is specific enough
-3. **Remembering preferences** so future interactions are personalized
+{{REGISTRY_CAPABILITY}}
+- **Creating new skills** — immediately when the request is specific enough
+- **Remembering preferences** so future interactions are personalized
 
 ## How to Respond
 Reply with a JSON array of actions. Each action is an object with an "action" field.
 
 Available actions:
 - `{"action": "reply", "text": "..."}` — Say something to the user
-- `{"action": "search_registry", "query": "..."}` — Search for existing skills (use keywords)
-- `{"action": "recommend_skill", "skill_id": "...", "reason": "..."}` — Recommend a found skill
-- `{"action": "create_skill", "description": "...", "schedule": "every 10m | every 2h | */10 * * * * | null"}` — Create a new automation
+{{REGISTRY_ACTIONS}}- `{"action": "create_skill", "description": "...", "schedule": "every 10m | every 2h | */10 * * * * | null"}` — Create a new automation
 - `{"action": "save_preference", "key": "...", "value": "..."}` — Remember something about the user
 - `{"action": "ask_question", "question": "...", "options": ["A", "B", ...]}` — Ask for clarification
 
@@ -76,8 +74,7 @@ Available actions:
 - If a user asks for multiple skills at once, include ALL of them as separate create_skill actions in your JSON response array.
 - Only ask clarifying questions if the request is truly vague (no task names, no clear purpose).
 - You MUST use actions to take action — do not just describe or list what you would do. Execute it now.
-- Use search_registry to check for existing skills before creating new ones with create_skill.
-- Save preferences when you learn something reusable (location, preferred channels, schedule patterns)
+{{REGISTRY_RULE}}- Save preferences when you learn something reusable (location, preferred channels, schedule patterns)
 - Preference keys should be descriptive: "preferred_channel", "location", "wake_up_time", etc.
 - For simple questions or greetings, just reply naturally without trying to create skills.
 "#;
@@ -327,9 +324,30 @@ fn build_messages(
     registry_entries: &[RegistryEntry],
     config: &Config,
 ) -> Vec<LlmMessage> {
+    // Conditionally include registry-related actions only when the registry is loaded.
+    // If empty (offline or not yet fetched), hide search_registry/recommend_skill to avoid
+    // unnecessary LLM round-trips that always return "없어요".
+    let (capability, actions, rule) = if registry_entries.is_empty() {
+        (
+            "- **Creating new skills** — immediately when the request is specific enough",
+            String::new(),
+            String::new(),
+        )
+    } else {
+        (
+            "1. **Recommending existing skills** from the registry if one matches\n2. **Creating new skills** — immediately when the request is specific enough",
+            "- `{\"action\": \"search_registry\", \"query\": \"...\"}` — Search for existing skills (use keywords)\n- `{\"action\": \"recommend_skill\", \"skill_id\": \"...\", \"reason\": \"...\"}` — Recommend a found skill\n".to_string(),
+            "- Use search_registry to check for existing skills before creating new ones with create_skill.\n".to_string(),
+        )
+    };
+    let system_prompt = SYSTEM_PROMPT
+        .replace("{{REGISTRY_CAPABILITY}}", capability)
+        .replace("{{REGISTRY_ACTIONS}}", &actions)
+        .replace("{{REGISTRY_RULE}}", &rule);
+
     let mut messages = vec![LlmMessage {
         role: Role::System,
-        content: SYSTEM_PROMPT.to_string(),
+        content: system_prompt,
     }];
 
     // Inject user context

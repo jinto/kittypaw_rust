@@ -17,8 +17,8 @@
 - [x] **C-2** `TEACH_PROMPT` 누락 primitive 11개 추가
   - `teach_loop.rs`: `Env`, `File`, `Git`, `Shell`, `Agent`, `Moa`, `Vision`, `Image`, `Slack`, `Discord`, `Todo` 추가
 
-- [x] **C-3** `assistant.rs` 모순 지시 수정
-  - "Do NOT use search_registry" → search_registry 활용 권장으로 교체
+- [x] **C-3** `assistant.rs` 모순 지시 + 오프라인 시 불필요한 round-trip 제거
+  - `{{REGISTRY_ACTIONS}}` 플레이스홀더: registry 비어있으면 search_registry/recommend_skill 액션을 프롬프트에서 제거
 
 - [x] **C-4** `execute_chain_steps` 체인 스텝 오류 전파
   - `execution.rs`: `let _ = execute_skill_calls(...)` → `if let Ok` + 실패 시 `tracing::warn!`
