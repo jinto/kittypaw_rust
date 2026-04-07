@@ -97,7 +97,8 @@ pub(super) async fn execute_skill_mgmt(call: &SkillCall) -> Result<serde_json::V
                     })
                 })
                 .collect();
-            Ok(serde_json::json!({"skills": list}))
+            // Return array directly — LLM expects skills.length, not skills.skills.length
+            Ok(serde_json::json!(list))
         }
         "delete" => {
             let name = call.args.first().and_then(|v| v.as_str()).unwrap_or("");
