@@ -1190,10 +1190,147 @@ async fn handle_teach_command(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::{
+        desktop_event, make_in_memory_store, telegram_event, test_config, MockJsProvider,
+        PanicProvider, SequentialMockProvider,
+    };
+    use kittypaw_sandbox::Sandbox;
 
     #[test]
     fn system_prompt_contains_search_language_guide() {
         assert!(SYSTEM_PROMPT.contains("Search language"));
         assert!(SYSTEM_PROMPT.contains("SAME language"));
+    }
+
+    /// Agent loop processes a simple return and produces the expected output.
+    #[tokio::test]
+    async fn test_agent_loop_simple_return() {
+        let provider = MockJsProvider::new(r#"return "hello from agent";"#);
+        let config = test_config();
+        let sandbox = Sandbox::new_threaded(config.sandbox.clone());
+        let store = make_in_memory_store();
+
+        let session = AgentSession {
+            provider: &provider,
+            fallback_provider: None,
+            sandbox: &sandbox,
+            store,
+            config: &config,
+            on_token: None,
+            on_permission_request: None,
+        };
+
+        let result = session.run(desktop_event("hello")).await;
+        assert!(result.is_ok(), "agent_loop should succeed: {:?}", result);
+        assert_eq!(result.unwrap(), "hello from agent");
+    }
+
+    /// /help slash command is handled without LLM invocation.
+    #[tokio::test]
+    async fn test_slash_help_no_llm() {
+        let config = test_config();
+        let sandbox = Sandbox::new_threaded(config.sandbox.clone());
+        let store = make_in_memory_store();
+        let session = AgentSession {
+            provider: &PanicProvider,
+            fallback_provider: None,
+            sandbox: &sandbox,
+            store,
+            config: &config,
+            on_token: None,
+            on_permission_request: None,
+        };
+
+        let result = session.run(desktop_event("/help")).await;
+        assert!(result.is_ok(), "/help should succeed: {:?}", result);
+        let text = result.unwrap();
+        assert!(
+            text.contains("/run"),
+            "help text should mention /run: {text}"
+        );
+        assert!(
+            text.contains("/teach"),
+            "help text should mention /teach: {text}"
+        );
+    }
+
+    /// /status returns execution stats from the in-memory store.
+    #[tokio::test]
+    async fn test_slash_status_returns_stats() {
+        let config = test_config();
+        let sandbox = Sandbox::new_threaded(config.sandbox.clone());
+        let store = make_in_memory_store();
+        let session = AgentSession {
+            provider: &PanicProvider,
+            fallback_provider: None,
+            sandbox: &sandbox,
+            store,
+            config: &config,
+            on_token: None,
+            on_permission_request: None,
+        };
+
+        let result = session.run(desktop_event("/status")).await;
+        assert!(result.is_ok(), "/status should succeed: {:?}", result);
+        let text = result.unwrap();
+        assert!(
+            text.contains("오늘") || text.contains("실행") || text.contains("토큰"),
+            "/status should contain run stats: {text}"
+        );
+    }
+
+    /// Agent retries on sandbox error and succeeds on second attempt.
+    #[tokio::test]
+    async fn test_agent_loop_retries_on_sandbox_error() {
+        // First attempt: invalid JS → sandbox error
+        // Second attempt: valid JS → succeeds
+        let provider = SequentialMockProvider::new([
+            "this is not valid javascript !!!@@@###",
+            r#"return "recovered";"#,
+        ]);
+        let config = test_config();
+        let sandbox = Sandbox::new_threaded(config.sandbox.clone());
+        let store = make_in_memory_store();
+
+        let session = AgentSession {
+            provider: &provider,
+            fallback_provider: None,
+            sandbox: &sandbox,
+            store,
+            config: &config,
+            on_token: None,
+            on_permission_request: None,
+        };
+
+        let result = session.run(desktop_event("try something")).await;
+        assert!(result.is_ok(), "should succeed after retry: {:?}", result);
+        assert_eq!(result.unwrap(), "recovered");
+    }
+
+    /// Telegram events are processed correctly (separate agent_id from desktop).
+    #[tokio::test]
+    async fn test_agent_loop_telegram_event() {
+        let provider = MockJsProvider::new(r#"return "tg:ok";"#);
+        let config = test_config();
+        let sandbox = Sandbox::new_threaded(config.sandbox.clone());
+        let store = make_in_memory_store();
+
+        let session = AgentSession {
+            provider: &provider,
+            fallback_provider: None,
+            sandbox: &sandbox,
+            store,
+            config: &config,
+            on_token: None,
+            on_permission_request: None,
+        };
+
+        let result = session.run(telegram_event("hello", "99999")).await;
+        assert!(
+            result.is_ok(),
+            "telegram event should succeed: {:?}",
+            result
+        );
+        assert_eq!(result.unwrap(), "tg:ok");
     }
 }

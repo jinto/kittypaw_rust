@@ -121,11 +121,7 @@ fn normalize_for_tts(text: &str) -> String {
 }
 
 fn uuid_short() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let t = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    format!("{:x}{:x}", t.as_secs(), t.subsec_nanos())
+    uuid::Uuid::new_v4().simple().to_string()[..8].to_string()
 }
 
 #[cfg(test)]

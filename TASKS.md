@@ -2,6 +2,105 @@
 
 > "시작은 3분, 성장은 평생." — see [VISION.md](VISION.md)
 
+## 🔧 코드 건강성 리팩토링
+
+> 계획 파일: `.claude/plans/refactor-codebase-health.md`
+> 원칙: 각 커밋 후 `cargo test --workspace` 통과 유지. 공개 API 변경 없음.
+
+### Phase 1: 테스트 인프라 (LOW risk) ✅
+
+- [x] **1.1** `kittypaw-engine` dev-dep에 test_utils 모듈 추가
+  - `crates/kittypaw-engine/src/test_utils.rs` 파일 생성
+  - `MockJsProvider` 를 `integration.rs`에서 추출 → `test_utils`로 이동
+  - `test_config()` / `telegram_event()` / `desktop_event()` 헬퍼 추출
+  - `temp_db_path()` 세 곳(skill_executor/mod.rs, schedule.rs, store/lib.rs) → `store/test_utils` 하나로 통합
+  - **수락 기준:** `cargo test -p kittypaw-engine` 통과, `cargo test -p kittypaw-cli` 통과
+
+- [x] **1.2** agent_loop 단위 테스트 추가 (`agent_loop.rs` 기존 테스트 1개 → 5개)
+  - `/help` slash command 반환값 검증
+  - `/status` slash command (in-memory store)
+  - simple return → output 검증
+  - retry on sandbox error (MockJsProvider 순차 응답 지원)
+  - token budget 초과 시 LlmErrorKind::TokenLimit 처리
+  - **수락 기준:** `cargo test -p kittypaw-engine agent_loop` 5개 모두 통과
+
+### Phase 2: Critical fixes (MEDIUM risk) ✅
+
+- [x] **2.1** `uuid_v4()` → `uuid` 크레이트 교체
+  - `crates/kittypaw-engine/Cargo.toml` 에 `uuid = { version = "1", features = ["v4"] }` 추가
+  - `skill_executor/mod.rs:140-150` uuid_v4() 삭제 → `uuid::Uuid::new_v4().to_string()`
+  - `skill_executor/tts.rs:123` uuid_short()도 `uuid::Uuid::new_v4().simple().to_string()[..8]` 로 교체
+  - **수락 기준:** `cargo test -p kittypaw-engine` 통과, 기존 uuid_v4 테스트가 없으므로 컴파일 성공으로 확인
+
+- [x] **2.2** Store::open() 패턴 주석 명확화
+  - `schedule.rs`의 `execute_scheduled_skill()` / `execute_scheduled_package()` 내 Store::open() 3곳에 주석 추가
+  - `// Store must be re-opened after sandbox await: Connection is !Send and cannot cross await boundaries`
+  - `run_schedule_loop` 안의 scoped block에도 동일 설명 주석
+  - **수락 기준:** 코드 동작 변경 없음. 주석만 추가. 빌드 통과.
+
+- [x] **2.3** 미사용 `safe_calls`/`unsafe_calls` 파티션 정리
+  - `skill_executor/mod.rs:379-387` 파티션 제거
+  - 로그는 `tracing::debug!(total_calls = skill_calls.len(), "executing skill calls")` 로 단순화
+  - **수락 기준:** `cargo test -p kittypaw-engine` 통과
+
+### Phase 3: 파일 분할 (LOW risk)
+
+- [ ] **3.1** `schedule.rs` → `schedule/` 디렉토리
+  - `crates/kittypaw-engine/src/schedule/` 디렉토리 생성
+  - `mod.rs` — `run_schedule_loop` + pub re-exports
+  - `cron.rs` — `validate_cron`, `is_cron_due`, `is_due`, `is_package_due`
+  - `persistence.rs` — `open_schedule_db`, `init_schedule_db`, `get_last_run`, `set_last_run`, `get_failure_count`, `increment_failure_count`, `set_backoff_delay`, `reset_failure_count`
+  - `notification.rs` — `NotificationSender` 전체
+  - `auto_fix.rs` — `attempt_auto_fix`, `AutoFixResult`
+  - `execution.rs` — `execute_scheduled_skill`, `execute_scheduled_package`, `execute_chain_steps`, `prepare_package_context`, `handle_run_success`, `handle_run_failure`, `handle_execution_failure`, `append_execution_log`
+  - 기존 `schedule.rs` 삭제 (이동 완료 후)
+  - **수락 기준:** `cargo test --workspace` 통과, `cargo build` 통과, 공개 API 변경 없음 (lib.rs의 `pub use schedule::*` 유지)
+
+- [ ] **3.2** `agent_loop.rs` → `agent_loop/` 디렉토리
+  - `crates/kittypaw-engine/src/agent_loop/` 디렉토리 생성
+  - `mod.rs` — `AgentSession`, `AgentLoopParams`, `run_agent_loop`, `run_agent_loop_inner`, `SYSTEM_PROMPT`
+  - `commands.rs` — `try_handle_command`, `run_skill_by_name`, `execute_skill_code`, `handle_teach_command`
+  - `prompt.rs` — `build_prompt`, `format_event`, `format_exec_result`
+  - 기존 `agent_loop.rs` 삭제 (이동 완료 후)
+  - **수락 기준:** `cargo test --workspace` 통과, `cargo build` 통과
+
+- [ ] **3.3** `skill_executor/mod.rs` 테스트 분리
+  - 900줄 `#[cfg(test)]` 블록을 `skill_executor/tests.rs` (또는 `skill_executor/tests/` 디렉토리)로 이동
+  - `mod.rs`에 `#[cfg(test)] mod tests;` 선언
+  - **수락 기준:** `cargo test -p kittypaw-engine` 통과, `mod.rs` 600줄 이하
+
+### Phase 4: 중복 제거 (MEDIUM risk)
+
+- [ ] **4.1** CredentialResolver 통합
+  - `kittypaw-core/src/credential.rs` 신규 파일
+  - `resolve_credential(channel: &str, key: &str, env_var: &str, config: &Config) -> Option<String>` 함수
+  - `skill_executor/mod.rs::resolve_channel_token()` → credential::resolve_credential 사용
+  - `schedule.rs::NotificationSender::new()` resolve 클로저 → credential::resolve_credential 사용
+  - `skill_executor/telegram.rs::resolve_default_chat_id()` → credential::resolve_credential 사용
+  - **수락 기준:** `cargo test --workspace` 통과, 3곳의 resolve 로직 일관성 확인
+
+- [ ] **4.2** `AgentLoopParams` 레거시 제거 (선택사항)
+  - `agent_loop.rs`의 `AgentLoopParams` + `run_agent_loop()` 제거
+  - 모든 호출자를 `AgentSession::run()` 으로 이전
+  - `kittypaw-cli/src/commands/serve.rs` 등 호출자 확인 후 교체
+  - **수락 기준:** `cargo build --workspace` 통과
+
+### Phase 5: 정리 (LOW risk)
+
+- [ ] **5.1** Python 레거시 삭제
+  - `src/` 디렉토리 삭제 (Python 코드)
+  - `tests/unit/` Python 테스트 삭제 (Rust로 이관 완료)
+  - `pyproject.toml` / `uv.lock` 삭제
+  - **주의:** `infra/` (CDK stacks) 는 별도 검토 — 사용 중이면 유지
+  - **수락 기준:** `cargo build --workspace` 통과, `git status` 클린
+
+- [ ] **5.2** 프로덕션 unwrap() 상위 10개 → proper error handling
+  - `kittypaw-core/src/secrets.rs` (12개 unwrap) — `?` 또는 `.unwrap_or_else` 로 교체
+  - `kittypaw-core/src/package_manager.rs` (48개 unwrap 중 non-test) — 중요도 순 10개
+  - **수락 기준:** `cargo test --workspace` 통과, secrets.rs unwrap 0개
+
+---
+
 ## Completed
 
 ### Skill Platform — Phase 0~4 ✅

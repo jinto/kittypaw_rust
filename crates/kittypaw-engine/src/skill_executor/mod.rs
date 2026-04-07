@@ -17,7 +17,7 @@ mod telegram;
 mod todo;
 mod tts;
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -136,17 +136,8 @@ fn is_within_allowed_paths(path: &std::path::Path, allowed: &[std::path::PathBuf
     })
 }
 
-/// Generate a simple v4-style UUID without pulling in the `uuid` crate.
 fn uuid_v4() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    // Mix with thread-local counter for uniqueness within the same nanosecond.
-    static COUNTER: AtomicU32 = AtomicU32::new(0);
-    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("{nanos:032x}-{seq:08x}")
+    uuid::Uuid::new_v4().to_string()
 }
 
 /// Execute a single skill call inline (for use as a SkillResolver callback).
@@ -376,15 +367,7 @@ pub async fn execute_skill_calls(
     let allowed_hosts = &config.sandbox.allowed_hosts;
     // Per-execution LLM call counter (not global, avoids race between concurrent executions)
     let llm_call_count = AtomicU32::new(0);
-    let (safe_calls, unsafe_calls): (Vec<_>, Vec<_>) = skill_calls
-        .iter()
-        .partition(|call| is_read_only_skill_call(call));
-    tracing::debug!(
-        total_calls = skill_calls.len(),
-        safe_calls = safe_calls.len(),
-        unsafe_calls = unsafe_calls.len(),
-        "classified skill calls for safe/unsafe execution"
-    );
+    tracing::debug!(total_calls = skill_calls.len(), "executing skill calls");
     // Sequential execution: skill calls are ordered side-effects from JS.
     // Parallel would break ordering guarantees (message order, read-after-write).
     let mut results = Vec::new();
@@ -613,24 +596,8 @@ fn resolve_channel_token(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::{open_store, temp_db_path};
     use std::collections::HashMap;
-    use std::path::PathBuf;
-
-    fn temp_db_path() -> PathBuf {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-        let mut p = std::env::temp_dir();
-        p.push(format!(
-            "kittypaw_skill_test_{}_{}.db",
-            std::process::id(),
-            COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
-        p
-    }
-
-    fn open_store(path: &std::path::Path) -> Store {
-        Store::open(path.to_str().unwrap()).unwrap()
-    }
 
     fn make_call(method: &str, args: Vec<serde_json::Value>) -> SkillCall {
         SkillCall {

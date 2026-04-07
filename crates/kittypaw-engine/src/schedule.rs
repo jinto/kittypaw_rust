@@ -716,6 +716,7 @@ async fn execute_scheduled_skill(
         Ok(result) if result.success => {
             // Skill calls are already resolved inline by the skill_resolver.
             // No need for 2-phase execute_skill_calls — just record success.
+            // Store must be re-opened after the sandbox await: rusqlite::Connection is !Send.
             let store = match kittypaw_store::Store::open(db_path) {
                 Ok(s) => s,
                 Err(e) => {
@@ -859,6 +860,7 @@ async fn execute_chain_steps(
         match sandbox.execute(&chain_wrapped, chain_context).await {
             Ok(chain_result) if chain_result.success => {
                 // Execute captured skill calls (Telegram, Http, etc.)
+                // Store must be re-opened after the chain await: rusqlite::Connection is !Send.
                 if !chain_result.skill_calls.is_empty() {
                     let store = match kittypaw_store::Store::open(db_path) {
                         Ok(s) => s,
@@ -1137,7 +1139,8 @@ pub async fn run_schedule_loop(
     loop {
         interval.tick().await;
 
-        // Housekeeping — open store briefly for cleanup, then drop before await.
+        // Housekeeping — open store briefly for cleanup, then drop before next await.
+        // rusqlite::Connection is !Send, so it must be dropped before any await point.
         let (shared_ctx, pkg_contexts) = {
             let store = match kittypaw_store::Store::open(db_path) {
                 Ok(s) => s,
@@ -1235,6 +1238,7 @@ pub async fn run_schedule_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::temp_db_path;
     use kittypaw_core::package::{PackageMeta, PackagePermissions as PkgPerms};
     use kittypaw_core::skill::{Skill, SkillPermissions, SkillTrigger};
 
@@ -1323,14 +1327,7 @@ mod tests {
 
     #[test]
     fn test_schedule_db_persistence() {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-        let mut p = std::env::temp_dir();
-        p.push(format!(
-            "kittypaw_sched_test_{}_{}.db",
-            std::process::id(),
-            COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
+        let p = temp_db_path();
         let db_path = p.to_str().unwrap();
 
         init_schedule_db(db_path).unwrap();

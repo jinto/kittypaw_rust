@@ -27,6 +27,8 @@ toml = "0.8"
 rusqlite = { version = "0.32", features = ["bundled"] }
 edge-tts-rust = "0.1"
 regex = "1"
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
+async-trait = "0.1"
 tempfile = "3"
