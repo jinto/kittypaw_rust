@@ -192,13 +192,16 @@ fn slugify_description(text: &str) -> String {
         .join("-")
         .to_lowercase()
         .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .filter(|c| c.is_alphanumeric() || *c == '-')
         .collect();
+
+    // Trim leading/trailing dashes
+    let slug = slug.trim_matches('-');
 
     if slug.is_empty() {
         "unnamed-skill".to_string()
     } else {
-        slug
+        slug.to_string()
     }
 }
 
@@ -307,6 +310,25 @@ mod tests {
             "track-my-expenses-in"
         );
         assert_eq!(slugify_description(""), "unnamed-skill");
+    }
+
+    #[test]
+    fn test_slugify_korean() {
+        // Korean descriptions must produce unique, meaningful slugs
+        let slug1 = slugify_description("AI 뉴스 10분마다 요약해줘");
+        let slug2 = slugify_description("정치 뉴스 5분마다 요약해줘");
+        assert_ne!(
+            slug1, slug2,
+            "different descriptions must produce different slugs"
+        );
+        assert!(
+            slug1.len() > 3,
+            "korean slug should be meaningful, got: {slug1}"
+        );
+        assert!(
+            !slug1.starts_with('-') && !slug1.ends_with('-'),
+            "slug should not start/end with dash: {slug1}"
+        );
     }
 
     #[test]
