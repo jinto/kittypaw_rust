@@ -444,6 +444,7 @@ async fn run_agent_loop_inner(
             transition = ?reason,
             "code generated"
         );
+        tracing::debug!(agent_id = %agent_id, "generated JS:\n{code}");
 
         let context = serde_json::json!({
             "event": event.payload,
@@ -543,7 +544,7 @@ async fn run_agent_loop_inner(
         }
 
         let err_msg = exec_result.error.unwrap_or("unknown error".into());
-        tracing::warn!("Execution error (attempt {attempt}): {err_msg}");
+        tracing::warn!("Execution error (attempt {attempt}): {err_msg}\n--- failed code ---\n{code}\n--- end ---");
         let reason = TransitionReason::ExecutionFailed {
             error: err_msg.clone(),
             attempt,

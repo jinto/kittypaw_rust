@@ -289,7 +289,9 @@ pub(crate) async fn run_serve(bind_addr: &str) {
 
     // Spawn schedule evaluator
     let schedule_config = config.clone();
-    let schedule_sandbox = kittypaw_sandbox::sandbox::Sandbox::new(config.sandbox.clone());
+    // Must use ThreadSandbox (not ForkedSandbox) so skill_resolver works.
+    // ForkedSandbox ignores the resolver because closures can't cross fork().
+    let schedule_sandbox = kittypaw_sandbox::sandbox::Sandbox::new_threaded(config.sandbox.clone());
     let db_path_sched = db_path.clone();
     tokio::spawn(async move {
         kittypaw_engine::schedule::run_schedule_loop(

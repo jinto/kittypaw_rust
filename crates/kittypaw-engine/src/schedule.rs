@@ -678,9 +678,44 @@ async fn execute_scheduled_skill(
         .collect::<String>();
     let wrapped = format!("const ctx = JSON.parse(__context__);\n{js_code}");
     let started_at = Utc::now();
-    match sandbox.execute(&wrapped, context).await {
+
+    // Build inline skill resolver so Http/Web/Telegram/etc. work during execution.
+    let config_clone = config.clone();
+    let db_path_str = db_path.to_string();
+    let skill_perms = skill.permissions.clone();
+    let skill_resolver: Option<kittypaw_sandbox::SkillResolver> = Some(std::sync::Arc::new(
+        move |call: kittypaw_core::types::SkillCall| {
+            let config = config_clone.clone();
+            let db_path = db_path_str.clone();
+            let perms = skill_perms.clone();
+            Box::pin(async move {
+                let store = match kittypaw_store::Store::open(&db_path) {
+                    Ok(s) => s,
+                    Err(_) => return "null".to_string(),
+                };
+                let store = std::sync::Arc::new(tokio::sync::Mutex::new(store));
+                let checker =
+                    kittypaw_core::capability::CapabilityChecker::from_skill_permissions(&perms);
+                let checker = std::sync::Arc::new(std::sync::Mutex::new(checker));
+                crate::skill_executor::resolve_skill_call(
+                    &call,
+                    &config,
+                    &store,
+                    Some(&checker),
+                    None,
+                )
+                .await
+            })
+        },
+    ));
+
+    match sandbox
+        .execute_with_resolver(&wrapped, context, skill_resolver)
+        .await
+    {
         Ok(result) if result.success => {
-            // Open a fresh store after the await point (Store is !Sync)
+            // Skill calls are already resolved inline by the skill_resolver.
+            // No need for 2-phase execute_skill_calls — just record success.
             let store = match kittypaw_store::Store::open(db_path) {
                 Ok(s) => s,
                 Err(e) => {
@@ -688,55 +723,7 @@ async fn execute_scheduled_skill(
                     return;
                 }
             };
-            let call_error: Option<String> = if !result.skill_calls.is_empty() {
-                let preresolved = crate::skill_executor::resolve_storage_calls(
-                    &result.skill_calls,
-                    &store,
-                    Some(&skill.name),
-                );
-                let mut checker =
-                    kittypaw_core::capability::CapabilityChecker::from_skill_permissions(
-                        &skill.permissions,
-                    );
-                match crate::skill_executor::execute_skill_calls(
-                    &result.skill_calls,
-                    config,
-                    preresolved,
-                    Some(&skill.name),
-                    Some(&mut checker),
-                    None,
-                )
-                .await
-                {
-                    Ok(results) => results
-                        .iter()
-                        .find(|r| !r.success)
-                        .and_then(|r| r.error.clone()),
-                    Err(e) => Some(e.to_string()),
-                }
-            } else {
-                None
-            };
-            if let Some(ref err_msg) = call_error {
-                tracing::warn!(
-                    "Scheduled skill '{}' skill_call failed: {}",
-                    skill.name,
-                    err_msg
-                );
-                handle_run_failure(
-                    &store,
-                    notifier,
-                    data_dir,
-                    db_path,
-                    &skill.name,
-                    &skill.name,
-                    started_at,
-                    err_msg,
-                    &input_params,
-                    true,
-                    None,
-                );
-            } else {
+            {
                 tracing::info!(
                     "Scheduled skill '{}' completed: {}",
                     skill.name,
