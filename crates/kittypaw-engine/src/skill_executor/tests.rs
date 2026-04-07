@@ -874,6 +874,97 @@ async fn test_agent_delegate_no_provider() {
     assert!(result.unwrap_err().to_string().contains("no LLM provider"));
 }
 
+// ── M-4: ResourceKind::Execute — Shell/Git/Agent은 File이 아닌 Execute 권한 ──
+
+/// Shell.exec는 Supervised 모드에서 ResourceKind::Execute 권한 요청을 보내야 함.
+/// 현재 `ResourceKind::Execute`가 없으므로 컴파일 실패 = red 상태.
+#[test]
+fn test_shell_resource_kind_is_execute() {
+    use kittypaw_core::permission::ResourceKind;
+    assert!(matches!(
+        resource_kind_for_skill("Shell"),
+        ResourceKind::Execute
+    ));
+    assert!(matches!(
+        resource_kind_for_skill("Git"),
+        ResourceKind::Execute
+    ));
+    assert!(matches!(
+        resource_kind_for_skill("Agent"),
+        ResourceKind::Execute
+    ));
+    assert!(matches!(
+        resource_kind_for_skill("Moa"),
+        ResourceKind::Execute
+    ));
+}
+
+#[test]
+fn test_network_skills_remain_network() {
+    use kittypaw_core::permission::ResourceKind;
+    assert!(matches!(
+        resource_kind_for_skill("Telegram"),
+        ResourceKind::Network
+    ));
+    assert!(matches!(
+        resource_kind_for_skill("Http"),
+        ResourceKind::Network
+    ));
+    assert!(matches!(
+        resource_kind_for_skill("Web"),
+        ResourceKind::Network
+    ));
+    assert!(matches!(
+        resource_kind_for_skill("Slack"),
+        ResourceKind::Network
+    ));
+    assert!(matches!(
+        resource_kind_for_skill("Discord"),
+        ResourceKind::Network
+    ));
+}
+
+/// Supervised mode without a permission callback must DENY non-read-only actions.
+/// Previously, missing callback caused silent fall-through to Full-level execution.
+#[tokio::test]
+async fn test_supervised_mode_denies_without_permission_callback() {
+    let path = temp_db_path();
+    let store = Arc::new(tokio::sync::Mutex::new(open_store(&path)));
+
+    let mut config = kittypaw_core::config::Config::default();
+    config.autonomy_level = kittypaw_core::config::AutonomyLevel::Supervised;
+
+    let call = SkillCall {
+        skill_name: "Shell".to_string(),
+        method: "exec".to_string(),
+        args: vec![json_str("echo hi")],
+    };
+
+    // No permission callback provided (simulates batch/schedule context)
+    let result = resolve_skill_call(&call, &config, &store, None, None).await;
+    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert!(
+        parsed.get("_error").is_some() || parsed.get("error").is_some(),
+        "Supervised mode without UI callback must deny Shell.exec, got: {result}"
+    );
+    assert!(
+        result.contains("Supervised") || result.contains("permission"),
+        "Error message should mention Supervised mode, got: {result}"
+    );
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn test_file_skill_remains_file() {
+    use kittypaw_core::permission::ResourceKind;
+    assert!(matches!(
+        resource_kind_for_skill("File"),
+        ResourceKind::File
+    ));
+    assert!(matches!(resource_kind_for_skill("Env"), ResourceKind::File));
+}
+
 #[tokio::test]
 async fn test_agent_unknown_method() {
     let call = SkillCall {

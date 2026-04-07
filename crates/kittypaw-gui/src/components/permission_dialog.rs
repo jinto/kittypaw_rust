@@ -29,6 +29,7 @@ pub fn PermissionDialog() -> Element {
         let kind = match front.request.resource_kind {
             ResourceKind::File => "파일",
             ResourceKind::Network => "네트워크",
+            ResourceKind::Execute => "셸 실행",
         };
         (
             kind.to_string(),

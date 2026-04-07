@@ -49,7 +49,7 @@
   - **TDD**: `compact_turns_respects_cap()` 실패 테스트 먼저
   - `compaction.rs` `compact_turns()` 상한 파악 및 캡 설정
 
-- [ ] **M-4** `ResourceKind::Execute` 변형 추가 (Shell/Git/Agent 분리)
+- [x] **M-4** `ResourceKind::Execute` 변형 추가 (Shell/Git/Agent 분리)
   - **TDD**: `shell_requires_execute_permission()` 실패 테스트 먼저
   - `kittypaw-core/src/permission.rs`: `ResourceKind` enum에 `Execute` 추가
   - `skill_executor/mod.rs`: `Shell|Git|Agent|Moa` → `ResourceKind::Execute`

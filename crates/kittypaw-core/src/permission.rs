@@ -62,8 +62,12 @@ pub struct PermissionProfile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResourceKind {
+    /// File read/write (File primitive)
     File,
+    /// Outbound network call (Http, Web, Telegram, Slack, Discord)
     Network,
+    /// Shell/process execution (Shell, Git, Agent, Moa)
+    Execute,
 }
 
 /// A permission request sent to the frontend popup.

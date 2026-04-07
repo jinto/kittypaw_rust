@@ -140,6 +140,19 @@ fn uuid_v4() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+/// Map a skill name to its ResourceKind for Supervised-mode permission dialogs.
+///
+/// - Network: outbound HTTP/messaging (Telegram, Http, Web, Slack, Discord)
+/// - Execute: shell/process/agent execution (Shell, Git, Agent, Moa)
+/// - File: everything else (File, Env, Storage, Llm, Tts, …)
+pub(crate) fn resource_kind_for_skill(skill_name: &str) -> ResourceKind {
+    match skill_name {
+        "Telegram" | "Http" | "Web" | "Slack" | "Discord" => ResourceKind::Network,
+        "Shell" | "Git" | "Agent" | "Moa" => ResourceKind::Execute,
+        _ => ResourceKind::File,
+    }
+}
+
 /// Execute a single skill call inline (for use as a SkillResolver callback).
 /// Returns a string result that flows back to JS during sandbox execution.
 /// When `checker` is provided, the call is verified against the capability allowlist
@@ -464,38 +477,54 @@ async fn execute_single_call(
                 };
             }
             kittypaw_core::config::AutonomyLevel::Supervised => {
-                if let Some(cb) = on_permission {
-                    let resource_kind = match call.skill_name.as_str() {
-                        "Telegram" | "Http" | "Web" | "Slack" | "Discord" => {
-                            kittypaw_core::permission::ResourceKind::Network
+                match on_permission {
+                    Some(cb) => {
+                        let resource_kind = resource_kind_for_skill(call.skill_name.as_str());
+                        let request = kittypaw_core::permission::PermissionRequest {
+                            request_id: uuid_v4(),
+                            resource_kind,
+                            resource_path: format!("{}.{}", call.skill_name, call.method),
+                            action: "execute".to_string(),
+                            workspace_id: String::new(),
+                        };
+                        let rx = cb(request);
+                        match rx.await {
+                            Ok(
+                                kittypaw_core::permission::PermissionDecision::AllowOnce
+                                | kittypaw_core::permission::PermissionDecision::AllowPermanent,
+                            ) => {}
+                            _ => {
+                                return SkillResult {
+                                    skill_name: call.skill_name.clone(),
+                                    method: call.method.clone(),
+                                    success: false,
+                                    result: serde_json::Value::Null,
+                                    error: Some(format!(
+                                        "Denied by Supervised mode: {}.{}",
+                                        call.skill_name, call.method
+                                    )),
+                                };
+                            }
                         }
-                        _ => kittypaw_core::permission::ResourceKind::File,
-                    };
-                    let request = kittypaw_core::permission::PermissionRequest {
-                        request_id: uuid_v4(),
-                        resource_kind,
-                        resource_path: format!("{}.{}", call.skill_name, call.method),
-                        action: "execute".to_string(),
-                        workspace_id: String::new(),
-                    };
-                    let rx = cb(request);
-                    match rx.await {
-                        Ok(
-                            kittypaw_core::permission::PermissionDecision::AllowOnce
-                            | kittypaw_core::permission::PermissionDecision::AllowPermanent,
-                        ) => {}
-                        _ => {
-                            return SkillResult {
-                                skill_name: call.skill_name.clone(),
-                                method: call.method.clone(),
-                                success: false,
-                                result: serde_json::Value::Null,
-                                error: Some(format!(
-                                    "Denied by Supervised mode: {}.{}",
-                                    call.skill_name, call.method
-                                )),
-                            };
-                        }
+                    }
+                    None => {
+                        // No UI callback in Supervised mode → deny to prevent silent privilege escalation.
+                        // This applies to batch/schedule contexts where no dialog is available.
+                        tracing::warn!(
+                            skill = %call.skill_name,
+                            method = %call.method,
+                            "Supervised mode: no permission UI available, denying write action"
+                        );
+                        return SkillResult {
+                            skill_name: call.skill_name.clone(),
+                            method: call.method.clone(),
+                            success: false,
+                            result: serde_json::Value::Null,
+                            error: Some(format!(
+                                "Blocked by Supervised mode (no permission UI): {}.{}",
+                                call.skill_name, call.method
+                            )),
+                        };
                     }
                 }
             }
