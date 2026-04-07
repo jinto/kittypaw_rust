@@ -241,23 +241,24 @@ pub async fn execute_scheduled_skill(
     let started_at = Utc::now();
 
     // Build inline skill resolver so Http/Web/Telegram/etc. work during execution.
+    // M-1 fix: checker created ONCE here (outside the closure) so call_timestamps accumulate
+    // across all resolver invocations within a single execution, enforcing rate limits correctly.
     let config_clone = config.clone();
     let db_path_str = db_path.to_string();
-    let skill_perms = skill.permissions.clone();
+    let skill_checker = std::sync::Arc::new(std::sync::Mutex::new(
+        kittypaw_core::capability::CapabilityChecker::from_skill_permissions(&skill.permissions),
+    ));
     let skill_resolver: Option<kittypaw_sandbox::SkillResolver> = Some(std::sync::Arc::new(
         move |call: kittypaw_core::types::SkillCall| {
             let config = config_clone.clone();
             let db_path = db_path_str.clone();
-            let perms = skill_perms.clone();
+            let checker = skill_checker.clone();
             Box::pin(async move {
                 let store = match kittypaw_store::Store::open(&db_path) {
                     Ok(s) => s,
                     Err(_) => return "null".to_string(),
                 };
                 let store = std::sync::Arc::new(tokio::sync::Mutex::new(store));
-                let checker =
-                    kittypaw_core::capability::CapabilityChecker::from_skill_permissions(&perms);
-                let checker = std::sync::Arc::new(std::sync::Mutex::new(checker));
                 crate::skill_executor::resolve_skill_call(
                     &call,
                     &config,

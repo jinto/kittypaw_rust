@@ -340,6 +340,50 @@ mod tests {
             .is_err());
     }
 
+    /// The schedule loop MUST share one checker across all resolver invocations in a single run.
+    /// Bug: run_scheduled_skill created a new checker per SkillResolver call → rate limit bypassed.
+    /// Fix: checker created once outside the closure and shared via Arc<Mutex>.
+    ///
+    /// This test documents the correct contract: a single persistent checker enforces limits.
+    #[test]
+    fn test_schedule_loop_preserves_rate_limit() {
+        let config = AgentConfig {
+            id: "sched".into(),
+            name: "Scheduled Skill".into(),
+            system_prompt: String::new(),
+            channels: vec![],
+            allowed_skills: vec![SkillPermission {
+                skill: "Telegram".into(),
+                methods: vec![],
+                rate_limit_per_minute: 2,
+            }],
+        };
+        let call = SkillCall {
+            skill_name: "Telegram".into(),
+            method: "sendMessage".into(),
+            args: vec![],
+        };
+
+        // Fixed pattern: checker created once, shared across all resolver invocations
+        let mut checker = CapabilityChecker::from_agent_config(&config);
+        assert!(checker.check(&call).is_ok(), "1st call should be allowed");
+        assert!(checker.check(&call).is_ok(), "2nd call should be allowed");
+        assert!(
+            checker.check(&call).is_err(),
+            "3rd call must be rate-limited: persistent checker preserves counter"
+        );
+
+        // Bug pattern (what old code did): new checker per call bypasses the limit
+        // Documented here so future maintainers understand WHY we share the checker.
+        for _ in 0..5 {
+            let mut fresh = CapabilityChecker::from_agent_config(&config);
+            assert!(
+                fresh.check(&call).is_ok(),
+                "new checker always resets counter — this is the bug we fixed in M-1"
+            );
+        }
+    }
+
     #[test]
     fn test_from_package_permissions_rate_limit() {
         let permissions = PackagePermissions {

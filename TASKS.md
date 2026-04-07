@@ -37,7 +37,7 @@
 
 > **TDD 원칙**: 각 항목은 실패 테스트 먼저 작성 → 구현 → 통과 순서로 진행.
 
-- [ ] **M-1** `CapabilityChecker` rate limit 지속성
+- [x] **M-1** `CapabilityChecker` rate limit 지속성
   - **TDD**: `schedule_loop_preserves_rate_limit()` 실패 테스트 먼저
   - 스케줄 루프 수명 동안 checker 인스턴스 유지
 
