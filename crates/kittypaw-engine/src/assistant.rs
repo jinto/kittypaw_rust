@@ -174,7 +174,7 @@ async fn execute_actions(
                 let chat_id = extract_chat_id(ctx.event);
 
                 match teach_loop::handle_teach(
-                    &description,
+                    description,
                     &chat_id,
                     ctx.provider,
                     ctx.sandbox,

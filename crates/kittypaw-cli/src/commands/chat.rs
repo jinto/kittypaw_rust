@@ -236,7 +236,7 @@ pub(crate) async fn run_stdin() {
     })));
 
     // Run agent loop with overall timeout to prevent indefinite blocking
-    let timeout_secs = config.sandbox.timeout_secs as u64 * 4; // e.g. 30 * 4 = 120s
+    let timeout_secs = config.sandbox.timeout_secs * 4; // e.g. 30 * 4 = 120s
     let session = kittypaw_cli::agent_loop::AgentSession {
         provider: &*provider,
         fallback_provider: fallback.as_deref(),

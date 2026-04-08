@@ -390,6 +390,7 @@ fn handle_execution_failure(
 }
 
 /// Notify retry and record a failed execution run (shared by skills and packages).
+#[allow(clippy::too_many_arguments)]
 fn handle_run_failure(
     store: &kittypaw_store::Store,
     notifier: &NotificationSender,
@@ -423,6 +424,7 @@ fn handle_run_failure(
 }
 
 /// Record a successful execution and persist pattern-detected defaults.
+#[allow(clippy::too_many_arguments)]
 fn handle_run_success(
     store: &kittypaw_store::Store,
     notifier: &NotificationSender,

@@ -73,9 +73,9 @@ Example — WRONG (hallucination):
   return news;
 
 ## Voice output
-When the user says "읽어줘", "읽어달라", "음성으로", or "read aloud":
-1. Generate text content first
-2. Call `const tts = await Tts.speak(text)` to create an audio file
+When the user says "읽어줘", "들려줘", "읽어달라", "음성으로", or "read aloud":
+1. Generate text content first (e.g. search, summarize)
+2. Call `const tts = await Tts.speak(text)` — the system automatically polishes text for natural speech
 3. Call `await Telegram.sendVoice(tts.path)` to send it as a voice message
 
 ## Clarification
@@ -112,23 +112,23 @@ impl<'a> AgentSession<'a> {
             self.store.clone(),
             self.config,
             self.provider,
-            &self.sandbox,
+            self.sandbox,
         )
         .await
         {
             return response;
         }
 
-        run_agent_loop_inner(
+        run_agent_loop_inner(AgentLoopParams {
             event,
-            self.provider,
-            self.fallback_provider,
-            &self.sandbox,
-            self.store.clone(),
-            self.config,
-            self.on_token.clone(),
-            self.on_permission_request.clone(),
-        )
+            provider: self.provider,
+            fallback_provider: self.fallback_provider,
+            sandbox: self.sandbox,
+            store: self.store.clone(),
+            config: self.config,
+            on_token: self.on_token.clone(),
+            on_permission_request: self.on_permission_request.clone(),
+        })
         .await
     }
 }
@@ -146,6 +146,10 @@ pub struct AgentLoopParams<'a> {
 }
 
 pub async fn run_agent_loop(params: AgentLoopParams<'_>) -> Result<String> {
+    run_agent_loop_inner(params).await
+}
+
+async fn run_agent_loop_inner(params: AgentLoopParams<'_>) -> Result<String> {
     let AgentLoopParams {
         event,
         provider,
@@ -156,29 +160,6 @@ pub async fn run_agent_loop(params: AgentLoopParams<'_>) -> Result<String> {
         on_token,
         on_permission_request,
     } = params;
-    run_agent_loop_inner(
-        event,
-        provider,
-        fallback_provider,
-        sandbox,
-        store,
-        config,
-        on_token,
-        on_permission_request,
-    )
-    .await
-}
-
-async fn run_agent_loop_inner(
-    event: Event,
-    provider: &dyn LlmProvider,
-    fallback_provider: Option<&dyn LlmProvider>,
-    sandbox: &Sandbox,
-    store: Arc<Mutex<Store>>,
-    config: &kittypaw_core::config::Config,
-    on_token: Option<Arc<dyn Fn(String) + Send + Sync>>,
-    on_permission_request: Option<crate::skill_executor::PermissionCallback>,
-) -> Result<String> {
     let channel_name = match event.event_type {
         EventType::Telegram => "telegram",
         EventType::WebChat => "web",
@@ -975,16 +956,16 @@ async fn try_handle_command(
         {
             let session_id = event.session_id();
             return Some(
-                execute_skill_code(
-                    &js_code,
-                    &skill.name,
-                    &session_id,
+                execute_skill_code(ExecuteSkillParams {
+                    js_code: &js_code,
+                    skill_name: &skill.name,
+                    session_id: &session_id,
                     event,
                     config,
                     sandbox,
-                    &store,
-                    Some(&skill.permissions),
-                )
+                    store: &store,
+                    permissions: Some(&skill.permissions),
+                })
                 .await,
             );
         }
@@ -1030,16 +1011,16 @@ async fn run_skill_by_name(
             code_or_prompt
         };
 
-        return execute_skill_code(
-            &js_code,
+        return execute_skill_code(ExecuteSkillParams {
+            js_code: &js_code,
             skill_name,
             session_id,
             event,
             config,
             sandbox,
             store,
-            Some(&skill.permissions),
-        )
+            permissions: Some(&skill.permissions),
+        })
         .await;
     }
 
@@ -1076,7 +1057,7 @@ async fn run_skill_by_name(
             let s = store.lock().await;
             let preresolved = crate::skill_executor::resolve_storage_calls(
                 &exec_result.skill_calls,
-                &*s,
+                &s,
                 Some(&pkg.meta.id),
             );
             drop(s);
@@ -1107,17 +1088,31 @@ async fn run_skill_by_name(
     )))
 }
 
+/// Parameters for executing a skill's JS code in the sandbox.
+struct ExecuteSkillParams<'a> {
+    js_code: &'a str,
+    skill_name: &'a str,
+    session_id: &'a str,
+    event: &'a Event,
+    config: &'a kittypaw_core::config::Config,
+    sandbox: &'a Sandbox,
+    store: &'a Arc<Mutex<Store>>,
+    permissions: Option<&'a kittypaw_core::skill::SkillPermissions>,
+}
+
 /// Execute JS code in sandbox and handle resulting skill calls.
-async fn execute_skill_code(
-    js_code: &str,
-    skill_name: &str,
-    session_id: &str,
-    event: &Event,
-    config: &kittypaw_core::config::Config,
-    sandbox: &Sandbox,
-    store: &Arc<Mutex<Store>>,
-    permissions: Option<&kittypaw_core::skill::SkillPermissions>,
-) -> Result<String> {
+async fn execute_skill_code(params: ExecuteSkillParams<'_>) -> Result<String> {
+    let ExecuteSkillParams {
+        js_code,
+        skill_name,
+        session_id,
+        event,
+        config,
+        sandbox,
+        store,
+        permissions,
+    } = params;
+
     let wrapped_code = format!("const ctx = JSON.parse(__context__);\n{js_code}");
     let context = serde_json::json!({
         "event_type": format!("{:?}", event.event_type).to_lowercase(),
@@ -1131,7 +1126,7 @@ async fn execute_skill_code(
         let s = store.lock().await;
         let preresolved = crate::skill_executor::resolve_storage_calls(
             &exec_result.skill_calls,
-            &*s,
+            &s,
             Some(skill_name),
         );
         drop(s);

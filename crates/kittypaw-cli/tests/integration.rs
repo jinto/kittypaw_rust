@@ -39,9 +39,10 @@ impl LlmProvider for MockJsProvider {
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 fn test_config() -> Config {
-    let mut config = Config::default();
-    config.freeform_fallback = true; // allow natural language → agent_loop
-    config
+    Config {
+        freeform_fallback: true, // allow natural language → agent_loop
+        ..Config::default()
+    }
 }
 
 fn telegram_event(text: &str, chat_id: &str) -> Event {

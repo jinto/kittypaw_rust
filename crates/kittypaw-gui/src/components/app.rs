@@ -22,7 +22,7 @@ pub fn App() -> Element {
                 let store = store_arc.lock().await;
                 if let Ok(Some(lang)) = store.get_user_context("locale") {
                     let mut i18n = use_context::<Signal<I18n>>();
-                    i18n.set(I18n::new(Locale::from_str(&lang)));
+                    i18n.set(I18n::new(Locale::parse(&lang)));
                 }
             });
         });
