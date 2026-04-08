@@ -23,6 +23,7 @@ pub fn Onboarding(on_complete: EventHandler) -> Element {
         2 => rsx! { StepLlm { on_next: move |_| step.set(3) } },
         3 => rsx! { StepTelegram { on_next: move |_| step.set(4) } },
         4 => rsx! { StepWorkspace { on_next: move |_| step.set(5) } },
+        5 => rsx! { StepHttpAccess { on_next: move |_| step.set(6) } },
         _ => rsx! { StepComplete { on_complete } },
     }
 }
@@ -522,7 +523,52 @@ fn StepTelegram(on_next: EventHandler) -> Element {
     }
 }
 
-// ── Step 4: Complete ──────────────────────────────────────────────────────────
+// ── Step 5: HTTP Access ───────────────────────────────────────────────────────
+
+#[component]
+fn StepHttpAccess(on_next: EventHandler) -> Element {
+    let app_state = use_context::<AppState>();
+
+    rsx! {
+        div {
+            style: "display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; padding: 40px; text-align: center;",
+            h2 {
+                style: "font-family: 'Fraunces', Georgia, serif; font-size: 28px; font-weight: 700; color: #1C1917; margin: 0 0 16px 0;",
+                "웹에 접속을 허용할까요?"
+            }
+            p {
+                style: "font-size: 15px; color: #78716C; margin: 0 0 12px 0; line-height: 1.6; max-width: 420px;",
+                "스킬이 날씨, 뉴스, 환율 등 외부 정보를 가져오려면 인터넷 접속이 필요합니다."
+            }
+            p {
+                style: "font-size: 13px; color: #A8A29E; margin: 0 0 40px 0;",
+                "허용하지 않으면 Http/Web 스킬은 스케줄 실행 시 차단됩니다."
+            }
+            div {
+                style: "display: flex; gap: 12px;",
+                button {
+                    style: "padding: 12px 32px; background: #86EFAC; color: #166534; border: none; border-radius: 6px; font-size: 15px; font-weight: 600; cursor: pointer;",
+                    onclick: move |_| {
+                        let store = app_state.store.clone();
+                        spawn(async move {
+                            let s = store.lock().await;
+                            let _ = s.grant_capability("http");
+                        });
+                        on_next.call(());
+                    },
+                    "허용"
+                }
+                button {
+                    style: "padding: 12px 32px; background: #F5F5F4; color: #44403C; border: none; border-radius: 6px; font-size: 15px; font-weight: 600; cursor: pointer;",
+                    onclick: move |_| on_next.call(()),
+                    "나중에"
+                }
+            }
+        }
+    }
+}
+
+// ── Step 6: Complete ──────────────────────────────────────────────────────────
 
 #[component]
 fn StepComplete(on_complete: EventHandler) -> Element {

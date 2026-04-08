@@ -182,4 +182,34 @@ impl Store {
             global_paths,
         })
     }
+
+    // ── Global Grants (onboarding-time permanent permissions) ─────────────────
+
+    /// Persist a global capability grant (e.g. `"http"` granted during onboarding).
+    pub fn grant_capability(&self, capability: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO global_grants (capability) VALUES (?1)",
+            params![capability],
+        )?;
+        Ok(())
+    }
+
+    /// Returns `true` if the capability was permanently granted (e.g. via onboarding).
+    pub fn has_capability_grant(&self, capability: &str) -> Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM global_grants WHERE capability = ?1",
+            params![capability],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    /// Revoke a previously granted capability.
+    pub fn revoke_capability(&self, capability: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM global_grants WHERE capability = ?1",
+            params![capability],
+        )?;
+        Ok(())
+    }
 }

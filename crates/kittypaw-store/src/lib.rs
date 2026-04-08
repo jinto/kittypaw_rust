@@ -43,6 +43,7 @@ fn migrations() -> Migrations<'static> {
         M::up(include_str!("migrations/009_skill_fixes.sql")),
         M::up(include_str!("migrations/010_checkpoints.sql")),
         M::up(include_str!("migrations/011_audit_log.sql")),
+        M::up(include_str!("migrations/012_global_grants.sql")),
     ])
 }
 
@@ -627,6 +628,26 @@ mod tests {
         let results = store.search_executions("Hacker", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].skill_id, "rss");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// M-5: Http grant persists in the store and is readable.
+    #[test]
+    fn http_allowed_after_onboarding_grant() {
+        let path = temp_db_path();
+        let store = Store::open(path.to_str().unwrap()).unwrap();
+
+        // Before grant: not allowed
+        assert!(!store.has_capability_grant("http").unwrap());
+
+        // After onboarding grant
+        store.grant_capability("http").unwrap();
+        assert!(store.has_capability_grant("http").unwrap());
+
+        // Revoke works too
+        store.revoke_capability("http").unwrap();
+        assert!(!store.has_capability_grant("http").unwrap());
 
         let _ = std::fs::remove_file(&path);
     }

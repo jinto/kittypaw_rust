@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use crate::error::{KittypawError, Result};
 
@@ -68,9 +69,14 @@ fn sanitize_name(name: &str) -> std::result::Result<String, KittypawError> {
 
 /// Returns the skills directory path, creating it if needed.
 ///
-/// Resolved via `AppPaths::from_data_dir()` (honours `KITTYPAW_HOME`).
+/// Resolved via `AppPaths::from_data_dir()` (honours `KITTYPAW_HOME`) on first call,
+/// then cached for the lifetime of the process to avoid race conditions with tests that
+/// temporarily mutate `KITTYPAW_HOME`.
 pub fn skills_dir() -> PathBuf {
-    let dir = crate::app_paths::AppPaths::from_data_dir().skills_dir();
+    static CACHED: OnceLock<PathBuf> = OnceLock::new();
+    let dir = CACHED
+        .get_or_init(|| crate::app_paths::AppPaths::from_data_dir().skills_dir())
+        .clone();
     if !dir.exists() {
         if let Err(e) = std::fs::create_dir_all(&dir) {
             tracing::warn!("Failed to create skills directory {}: {e}", dir.display());

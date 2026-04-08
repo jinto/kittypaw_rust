@@ -548,7 +548,7 @@ async fn test_http_invalid_url_not_retried() {
     };
     let config = kittypaw_core::config::Config::default();
     let counter = AtomicU32::new(0);
-    let result = execute_single_call(&call, &[], &config, None, &counter, None, None).await;
+    let result = execute_single_call(&call, &[], &config, None, &counter, None, None, false).await;
     assert!(!result.success);
     assert!(
         result.error.as_ref().unwrap().contains("invalid URL"),
@@ -1046,4 +1046,47 @@ fn test_is_not_read_only_agent_delegate() {
         args: vec![],
     };
     assert!(!is_read_only_skill_call(&call));
+}
+
+/// M-5: Supervised batch allows Http.post when onboarding grant is stored.
+///
+/// Http.post gets past the Supervised gate when `http_network_granted = true`.
+/// The call will then fail with a network/URL error (not a Supervised block), which
+/// proves the permission layer passed correctly.
+#[tokio::test]
+async fn test_supervised_http_allowed_after_onboarding_grant() {
+    let path = temp_db_path();
+    let store = Arc::new(tokio::sync::Mutex::new(open_store(&path)));
+
+    // Grant Http access (simulates onboarding "허용" button)
+    {
+        let s = store.lock().await;
+        s.grant_capability("http").unwrap();
+    }
+
+    let mut config = kittypaw_core::config::Config::default();
+    config.autonomy_level = kittypaw_core::config::AutonomyLevel::Supervised;
+
+    let call = SkillCall {
+        skill_name: "Http".to_string(),
+        method: "post".to_string(),
+        args: vec![json_str("https://httpbin.org/post"), json_str("{}")],
+    };
+
+    // resolve_skill_call_inner loads the grant from store automatically
+    let result = resolve_skill_call(&call, &config, &store, None, None).await;
+    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap_or_default();
+
+    // Must NOT be blocked by Supervised mode — any other error (network, etc.) is fine
+    let error_msg = parsed
+        .get("_error")
+        .or_else(|| parsed.get("error"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    assert!(
+        !error_msg.contains("Supervised"),
+        "Http.post should pass Supervised gate with grant, but got: {result}"
+    );
+
+    let _ = std::fs::remove_file(&path);
 }

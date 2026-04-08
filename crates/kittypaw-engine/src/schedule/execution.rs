@@ -439,6 +439,7 @@ pub async fn execute_chain_steps(
                         &store,
                         Some(&chain_pkg.meta.id),
                     );
+                    let http_network_granted = store.has_capability_grant("http").unwrap_or(false);
                     let mut checker =
                         kittypaw_core::capability::CapabilityChecker::from_package_permissions(
                             &chain_pkg.permissions,
@@ -456,6 +457,7 @@ pub async fn execute_chain_steps(
                         Some(&chain_pkg.meta.id),
                         Some(&mut checker),
                         chain_model,
+                        http_network_granted,
                     )
                     .await
                     {
@@ -580,6 +582,7 @@ pub async fn execute_scheduled_package(
                     &store,
                     Some(&pkg.meta.id),
                 );
+                let http_network_granted = store.has_capability_grant("http").unwrap_or(false);
                 let mut checker =
                     kittypaw_core::capability::CapabilityChecker::from_package_permissions(
                         &pkg.permissions,
@@ -597,6 +600,7 @@ pub async fn execute_scheduled_package(
                     Some(&pkg.meta.id),
                     Some(&mut checker),
                     pkg_model_override,
+                    http_network_granted,
                 )
                 .await
                 {

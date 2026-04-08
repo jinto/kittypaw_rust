@@ -307,6 +307,10 @@ async fn resolve_skill_call_inner(
         };
     }
 
+    let http_network_granted = {
+        let s = store.lock().await;
+        s.has_capability_grant("http").unwrap_or(false)
+    };
     let llm_call_count = AtomicU32::new(0);
     let result = execute_single_call(
         call,
@@ -316,6 +320,7 @@ async fn resolve_skill_call_inner(
         &llm_call_count,
         None,
         on_permission,
+        http_network_granted,
     )
     .await;
 
@@ -388,6 +393,7 @@ pub async fn execute_skill_calls(
     skill_context: Option<&str>,
     mut checker: Option<&mut CapabilityChecker>,
     model_override: Option<&str>,
+    http_network_granted: bool,
 ) -> Result<Vec<SkillResult>> {
     let allowed_hosts = &config.sandbox.allowed_hosts;
     // Per-execution LLM call counter (not global, avoids race between concurrent executions)
@@ -419,7 +425,8 @@ pub async fn execute_skill_calls(
                 skill_context,
                 &llm_call_count,
                 model_override,
-                None, // on_permission: auto-allow (batch path)
+                None, // on_permission: batch path, no UI
+                http_network_granted,
             )
             .await
         };
@@ -465,6 +472,7 @@ async fn execute_single_call(
     llm_call_count: &AtomicU32,
     model_override: Option<&str>,
     on_permission: Option<&PermissionCallback>,
+    http_network_granted: bool,
 ) -> SkillResult {
     tracing::debug!(
         skill = %call.skill_name,
@@ -522,11 +530,13 @@ async fn execute_single_call(
                     None => {
                         // No UI in batch/schedule context — check by resource kind:
                         // 1. Configured channels → token registration = onboarding consent → allow
-                        // 2. Http/Web → require onboarding grant (M-5: persist AllowPermanent) → deny
+                        // 2. Http/Web → allow if onboarding grant was stored (M-5)
                         // 3. Execute/File → always deny without UI
                         let rk = resource_kind_for_skill(call.skill_name.as_str());
                         let allow = matches!(rk, ResourceKind::Network)
-                            && is_configured_channel(call.skill_name.as_str(), config);
+                            && (is_configured_channel(call.skill_name.as_str(), config)
+                                || (matches!(call.skill_name.as_str(), "Http" | "Web")
+                                    && http_network_granted));
                         if !allow {
                             let hint = if matches!(rk, ResourceKind::Network) {
                                 " (웹 접속 허용은 온보딩에서 설정하세요)"

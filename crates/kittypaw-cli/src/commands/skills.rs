@@ -137,11 +137,15 @@ pub(crate) async fn run_skill_cli(name: &str, dry_run: bool) {
                                 println!("  {}.{}({:?})", call.skill_name, call.method, call.args);
                             }
                         } else {
+                            let locked = store.lock().await;
                             let preresolved = kittypaw_cli::skill_executor::resolve_storage_calls(
                                 &result.skill_calls,
-                                &*store.lock().await,
+                                &*locked,
                                 Some(&skill.name),
                             );
+                            let http_network_granted =
+                                locked.has_capability_grant("http").unwrap_or(false);
+                            drop(locked);
                             let mut checker = kittypaw_core::capability::CapabilityChecker::from_skill_permissions(&skill.permissions);
                             match kittypaw_cli::skill_executor::execute_skill_calls(
                                 &result.skill_calls,
@@ -150,6 +154,7 @@ pub(crate) async fn run_skill_cli(name: &str, dry_run: bool) {
                                 Some(&skill.name),
                                 Some(&mut checker),
                                 None,
+                                http_network_granted,
                             )
                             .await
                             {

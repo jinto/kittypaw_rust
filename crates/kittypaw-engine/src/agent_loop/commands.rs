@@ -293,6 +293,7 @@ async fn run_skill_by_name(
                 &*s,
                 Some(&pkg.meta.id),
             );
+            let http_network_granted = s.has_capability_grant("http").unwrap_or(false);
             drop(s);
             let mut checker =
                 kittypaw_core::capability::CapabilityChecker::from_package_permissions(
@@ -305,6 +306,7 @@ async fn run_skill_by_name(
                 Some(&pkg.meta.id),
                 Some(&mut checker),
                 None,
+                http_network_granted,
             )
             .await;
         }
@@ -348,6 +350,7 @@ async fn execute_skill_code(
             &*s,
             Some(skill_name),
         );
+        let http_network_granted = s.has_capability_grant("http").unwrap_or(false);
         drop(s);
         let mut checker = permissions.map(|perms| {
             kittypaw_core::capability::CapabilityChecker::from_skill_permissions(perms)
@@ -359,6 +362,7 @@ async fn execute_skill_code(
             Some(skill_name),
             checker.as_mut(),
             None,
+            http_network_granted,
         )
         .await;
     }

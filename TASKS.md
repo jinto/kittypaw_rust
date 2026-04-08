@@ -56,7 +56,7 @@
   - Supervised 배치 경로: 채널(토큰 있음) → 자동 허용, Http/Web → Deny, Execute/File → Deny
   - GUI: "Shell 실행 허용?" 다이얼로그 레이블 추가
 
-- [ ] **M-5** Http 온보딩 권한 영속화
+- [x] **M-5** Http 온보딩 권한 영속화
   - **TDD**: `http_allowed_after_onboarding_grant()` 실패 테스트 먼저
   - 온보딩 시 "웹에 접속을 허용하시나요?" → `AllowPermanent` → Store에 저장
   - `execute_single_call` 배치 경로: Store에서 Http 권한 확인 후 자동 허용
