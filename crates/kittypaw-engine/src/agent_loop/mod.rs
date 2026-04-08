@@ -38,9 +38,10 @@ pub const SYSTEM_PROMPT: &str = r#"You are KittyPaw, an AI agent that helps user
 
 ## When to create a skill
 If the user asks for something recurring ("매일", "every day", "주기적으로"), create a skill with a schedule trigger.
-For one-time requests, just execute the code directly without creating a skill.
+For one-time delayed requests ("2분 뒤", "한 번만", "이번 한 번", "내일 아침 한 번"), create a skill with a once trigger.
+For immediate one-time requests, just execute the code directly without creating a skill.
 
-Example — scheduled skill (MUST include schedule as 5th argument):
+Example — scheduled skill (recurring, MUST include schedule as 5th argument):
   await Skill.create("ai-news", "AI 뉴스 매시간 요약", `
     const r = await Web.search("AI news");
     const summary = r.results.map(x => x.title).join("\\n");
@@ -48,7 +49,20 @@ Example — scheduled skill (MUST include schedule as 5th argument):
     return summary;
   `, "schedule", "every 1h");
 
+Example — once skill (one-shot delayed, MUST include delay as 5th argument):
+  await Skill.create("ai-news-once", "2분 뒤 AI 뉴스 한 번 요약", `
+    const r = await Web.search("AI 뉴스 오늘");
+    const article = await Web.fetch(r.results[0].url);
+    const summary = article.text.slice(0, 800);
+    await Telegram.sendMessage(summary);
+  `, "once", "2m");
+
+CRITICAL: Never use "schedule" trigger for one-time delayed tasks. "once" and "schedule" are different:
+- "schedule" = recurring (runs repeatedly on cron)
+- "once" = one-shot (runs exactly once after the delay, then deleted automatically)
+
 Schedule formats: "every 10m", "every 2h", "every 1d", or cron like "*/10 * * * *"
+Once delay formats: "2m", "10m", "1h" (minimum 1 minute)
 
 ## Search language
 When the user communicates in a specific language (e.g. Korean), generate Web.search queries in that SAME language to get locally relevant results.
@@ -68,12 +82,22 @@ ABSOLUTE PROHIBITIONS:
 
 Example — CORRECT:
   const results = await Web.search("AI news today");
-  const summary = results.results.map(r => r.title + ": " + r.snippet).join("\n");
+  const article = await Web.fetch(results.results[0].url);
+  const summary = article.text.slice(0, 1000); // extract body
   return summary;
 
 Example — WRONG (hallucination):
   const news = await Llm.generate("write AI news");  // LLM invents fake news!
   return news;
+
+## News & content quality
+For news, articles, or any content summaries — REQUIRED pipeline:
+1. Web.search(query) → get result URLs
+2. Web.fetch(url) on top 1-2 result URLs → get article body
+3. Extract 2-4 key sentences; remove titles/URLs/markdown/image alt text
+4. If voice (Tts.speak): rewrite as natural spoken sentences, 20-40 seconds length
+
+FORBIDDEN: returning search result snippet text directly without Web.fetch
 
 ## Voice output
 When the user says "읽어줘", "읽어달라", "음성으로", or "read aloud":
@@ -583,6 +607,18 @@ mod tests {
     fn system_prompt_contains_search_language_guide() {
         assert!(SYSTEM_PROMPT.contains("Search language"));
         assert!(SYSTEM_PROMPT.contains("SAME language"));
+    }
+
+    #[test]
+    fn system_prompt_enforces_news_fetch_pipeline() {
+        assert!(
+            SYSTEM_PROMPT.contains("Web.fetch"),
+            "SYSTEM_PROMPT must require Web.fetch step for news"
+        );
+        assert!(
+            SYSTEM_PROMPT.contains("snippet"),
+            "SYSTEM_PROMPT must explicitly forbid snippet-only responses"
+        );
     }
 
     /// Agent loop processes a simple return and produces the expected output.

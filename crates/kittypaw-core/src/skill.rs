@@ -44,6 +44,10 @@ pub struct SkillTrigger {
     pub natural: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub keyword: Option<String>,
+    /// Absolute UTC datetime (RFC 3339) for one-shot delayed execution.
+    /// Only set when `trigger_type == "once"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -247,6 +251,7 @@ fn parse_skill_md(path: &Path) -> Result<Option<(Skill, String)>> {
             cron: None,
             natural: None,
             keyword: Some(name),
+            run_at: None,
         },
         permissions: SkillPermissions {
             primitives: vec![
@@ -443,6 +448,7 @@ mod tests {
                 cron: None,
                 natural: None,
                 keyword: Some("hello".into()),
+                run_at: None,
             },
             permissions: SkillPermissions {
                 primitives: vec!["http".into()],

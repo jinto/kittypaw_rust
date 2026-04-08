@@ -31,7 +31,7 @@ pub fn is_cron_due(cron_expr: &str, last_run: Option<DateTime<Utc>>) -> bool {
         Ok(s) => s,
         Err(_) => return false,
     };
-    let reference = last_run.unwrap_or_else(|| Utc::now() - chrono::Duration::hours(24));
+    let reference = last_run.unwrap_or_else(|| Utc::now());
     schedule
         .after(&reference)
         .take_while(|t| *t <= Utc::now())
@@ -51,13 +51,46 @@ pub fn is_package_due(pkg: &SkillPackage, last_run: Option<DateTime<Utc>>) -> bo
     }
 }
 
-/// Check if a skill is due to run based on its cron schedule.
-pub fn is_due(skill: &Skill, last_run: Option<DateTime<Utc>>) -> bool {
-    if skill.trigger.trigger_type != "schedule" || !skill.enabled {
+/// Check if a one-shot skill is due to run.
+///
+/// A once skill is due when:
+/// 1. The skill is enabled
+/// 2. `run_at` is set and its datetime has passed
+/// 3. `last_run` is None (hasn't executed yet)
+pub fn is_once_due(skill: &Skill, last_run: Option<DateTime<Utc>>) -> bool {
+    if skill.trigger.trigger_type != "once" || !skill.enabled {
         return false;
     }
-    match &skill.trigger.cron {
-        Some(c) => is_cron_due(c, last_run),
+    if last_run.is_some() {
+        return false; // already ran
+    }
+    match &skill.trigger.run_at {
+        Some(run_at_str) => match run_at_str.parse::<DateTime<Utc>>() {
+            Ok(run_at) => run_at <= Utc::now(),
+            Err(_) => {
+                tracing::warn!(
+                    name = skill.name.as_str(),
+                    run_at = run_at_str.as_str(),
+                    "Once skill has invalid run_at timestamp — skipping"
+                );
+                false
+            }
+        },
         None => false,
+    }
+}
+
+/// Check if a skill is due to run based on its trigger.
+pub fn is_due(skill: &Skill, last_run: Option<DateTime<Utc>>) -> bool {
+    if !skill.enabled {
+        return false;
+    }
+    match skill.trigger.trigger_type.as_str() {
+        "schedule" => match &skill.trigger.cron {
+            Some(c) => is_cron_due(c, last_run),
+            None => false,
+        },
+        "once" => is_once_due(skill, last_run),
+        _ => false,
     }
 }

@@ -72,9 +72,7 @@ fn turn_to_message(
         }
         Role::Assistant => {
             let raw = match mode {
-                CompactionMode::AgentLoop => {
-                    turn.code.clone().unwrap_or_else(|| turn.content.clone())
-                }
+                CompactionMode::AgentLoop => turn.content.clone(),
                 CompactionMode::Assistant => {
                     turn.result.clone().unwrap_or_else(|| turn.content.clone())
                 }
@@ -439,5 +437,21 @@ mod tests {
     #[test]
     fn test_estimate_tokens_empty() {
         assert_eq!(estimate_tokens(""), 0);
+    }
+
+    #[test]
+    fn agent_loop_uses_content_not_code() {
+        // AgentLoop 모드에서 turn.code가 있어도 turn.content를 반환해야 함
+        let turn = make_turn(
+            Role::Assistant,
+            "AI 뉴스 요약 완료",
+            Some("Skill.create('multilingual-greetings', ...)"),
+            Some("ok"),
+        );
+        let msg = turn_to_message(&turn, &CompactionMode::AgentLoop, None).unwrap();
+        assert_eq!(
+            msg.content, "AI 뉴스 요약 완료",
+            "AgentLoop should use turn.content, not turn.code"
+        );
     }
 }

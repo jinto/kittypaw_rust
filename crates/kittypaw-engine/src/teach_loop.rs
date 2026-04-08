@@ -142,6 +142,7 @@ pub async fn handle_teach(
             keyword: None,
             cron: Some(cron_expr),
             natural: Some(teach_text.to_string()),
+            run_at: None,
         }
     } else {
         SkillTrigger {
@@ -149,6 +150,7 @@ pub async fn handle_teach(
             keyword: Some(skill_name.clone()),
             cron: None,
             natural: None,
+            run_at: None,
         }
     };
 
@@ -283,6 +285,63 @@ pub fn parse_schedule(schedule: &str) -> Result<String> {
 
     Err(KittypawError::Config(format!(
         "Invalid schedule: '{schedule}'. Use 'every 10m', 'every 2h', or cron like '*/10 * * * *'"
+    )))
+}
+
+/// Parse a relative delay string ("2m", "10m", "1h") into an absolute UTC datetime.
+///
+/// Formats: `"{N}m"` (minutes, minimum 1), `"{N}h"` (hours)
+/// Returns `now + delay`.
+// Maximum allowed delay to prevent integer overflow: 365 days in minutes
+const MAX_DELAY_MINUTES: u64 = 365 * 24 * 60;
+
+pub fn parse_once_delay(s: &str) -> Result<chrono::DateTime<chrono::Utc>> {
+    let s = s.trim().to_lowercase();
+
+    // Try "{N}m" format
+    if let Some(n_str) = s.strip_suffix('m') {
+        let n: u64 = n_str.parse().map_err(|_| {
+            KittypawError::Config(format!(
+                "Invalid delay '{s}': expected format like '2m' or '1h'"
+            ))
+        })?;
+        if n == 0 {
+            return Err(KittypawError::Config(
+                "Delay must be at least 1 minute".into(),
+            ));
+        }
+        if n > MAX_DELAY_MINUTES {
+            return Err(KittypawError::Config(format!(
+                "Delay too large ({n}m). Maximum is {MAX_DELAY_MINUTES}m (365 days)."
+            )));
+        }
+        return Ok(chrono::Utc::now() + chrono::Duration::minutes(n as i64));
+    }
+
+    // Try "{N}h" format
+    if let Some(n_str) = s.strip_suffix('h') {
+        let n: u64 = n_str.parse().map_err(|_| {
+            KittypawError::Config(format!(
+                "Invalid delay '{s}': expected format like '2m' or '1h'"
+            ))
+        })?;
+        if n == 0 {
+            return Err(KittypawError::Config(
+                "Delay must be at least 1 minute".into(),
+            ));
+        }
+        let as_minutes = n.saturating_mul(60);
+        if as_minutes > MAX_DELAY_MINUTES {
+            return Err(KittypawError::Config(format!(
+                "Delay too large ({n}h). Maximum is {} hours (365 days).",
+                MAX_DELAY_MINUTES / 60
+            )));
+        }
+        return Ok(chrono::Utc::now() + chrono::Duration::hours(n as i64));
+    }
+
+    Err(KittypawError::Config(format!(
+        "Invalid once delay: '{s}'. Use '2m', '10m', '1h', etc."
     )))
 }
 
@@ -425,5 +484,36 @@ mod tests {
     fn test_parse_schedule_invalid() {
         assert!(parse_schedule("banana").is_err());
         assert!(parse_schedule("").is_err());
+    }
+
+    #[test]
+    fn parse_once_delay_valid_formats() {
+        use chrono::Utc;
+        let before = Utc::now();
+        let t_2m = parse_once_delay("2m").unwrap();
+        let after = Utc::now();
+        // 2m delay: should be between now+1m and now+3m
+        assert!(t_2m > before + chrono::Duration::minutes(1));
+        assert!(t_2m < after + chrono::Duration::minutes(3));
+
+        let t_1h = parse_once_delay("1h").unwrap();
+        assert!(t_1h > before + chrono::Duration::minutes(59));
+        assert!(t_1h < after + chrono::Duration::minutes(61));
+    }
+
+    #[test]
+    fn parse_once_delay_minimum_one_minute() {
+        // "0m"은 에러
+        assert!(
+            parse_once_delay("0m").is_err(),
+            "0m should fail minimum check"
+        );
+    }
+
+    #[test]
+    fn parse_once_delay_invalid_format() {
+        assert!(parse_once_delay("abc").is_err());
+        assert!(parse_once_delay("").is_err());
+        assert!(parse_once_delay("2s").is_err(), "seconds not supported");
     }
 }

@@ -5,7 +5,7 @@ mod notification;
 mod persistence;
 
 // Public re-exports to maintain backward-compatible API
-pub use cron::{is_due, is_package_due, validate_cron};
+pub use cron::{is_due, is_once_due, is_package_due, validate_cron};
 pub use execution::{
     append_execution_log, execute_chain_steps, execute_scheduled_package, execute_scheduled_skill,
     handle_execution_failure, handle_run_failure, handle_run_success, prepare_package_context,
@@ -87,10 +87,11 @@ pub async fn run_schedule_loop(
 
         let notifier = NotificationSender::new(config);
 
-        // --- Run scheduled skills ---
+        // --- Run scheduled and once skills ---
         if let Ok(skills) = kittypaw_core::skill::load_all_skills() {
             for (skill, js_code) in &skills {
-                if skill.trigger.trigger_type != "schedule" || !skill.enabled {
+                let trigger_type = skill.trigger.trigger_type.as_str();
+                if (trigger_type != "schedule" && trigger_type != "once") || !skill.enabled {
                     continue;
                 }
                 let last_run = {
@@ -104,6 +105,16 @@ pub async fn run_schedule_loop(
                     skill, js_code, config, sandbox, &notifier, &data_dir, db_path, &store,
                 )
                 .await;
+                // Once skills run exactly once — delete after execution.
+                // handle_run_success already set last_run_at as a safety net in case deletion fails.
+                if trigger_type == "once" {
+                    if let Err(e) = kittypaw_core::skill::delete_skill(&skill.name) {
+                        tracing::warn!(
+                            name = skill.name.as_str(),
+                            "Failed to delete once skill after execution: {e}"
+                        );
+                    }
+                }
             }
         }
 
@@ -154,6 +165,30 @@ mod tests {
                 cron: Some(cron_expr.into()),
                 natural: None,
                 keyword: None,
+                run_at: None,
+            },
+            permissions: SkillPermissions {
+                primitives: vec![],
+                allowed_hosts: vec![],
+            },
+            format: kittypaw_core::skill::SkillFormat::Native,
+        }
+    }
+
+    fn make_once_skill(run_at: &str) -> Skill {
+        Skill {
+            name: "test-once".into(),
+            version: 1,
+            description: "A one-shot skill".into(),
+            created_at: "2026-01-01T00:00:00Z".into(),
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            enabled: true,
+            trigger: SkillTrigger {
+                trigger_type: "once".into(),
+                cron: None,
+                natural: Some("2m".into()),
+                keyword: None,
+                run_at: Some(run_at.into()),
             },
             permissions: SkillPermissions {
                 primitives: vec![],
@@ -186,6 +221,58 @@ mod tests {
         assert!(
             err.contains("too short"),
             "Expected 'too short' error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn is_once_due_before_run_at_returns_false() {
+        let future = (Utc::now() + chrono::Duration::minutes(5)).to_rfc3339();
+        let skill = make_once_skill(&future);
+        assert!(
+            !is_once_due(&skill, None),
+            "Should not be due before run_at"
+        );
+    }
+
+    #[test]
+    fn is_once_due_after_run_at_no_last_run_returns_true() {
+        let past = (Utc::now() - chrono::Duration::minutes(1)).to_rfc3339();
+        let skill = make_once_skill(&past);
+        assert!(
+            is_once_due(&skill, None),
+            "Should be due after run_at with no last_run"
+        );
+    }
+
+    #[test]
+    fn is_once_due_with_last_run_returns_false() {
+        let past = (Utc::now() - chrono::Duration::minutes(1)).to_rfc3339();
+        let skill = make_once_skill(&past);
+        // 이미 실행됐으면 재실행 금지
+        assert!(
+            !is_once_due(&skill, Some(Utc::now())),
+            "Should not be due after last_run is set"
+        );
+    }
+
+    #[test]
+    fn is_due_includes_once_trigger() {
+        let past = (Utc::now() - chrono::Duration::minutes(1)).to_rfc3339();
+        let skill = make_once_skill(&past);
+        assert!(
+            is_due(&skill, None),
+            "is_due should return true for due once skill"
+        );
+    }
+
+    #[test]
+    fn new_recurring_skill_not_immediately_due() {
+        // 새로 생성된 스킬(last_run == None)은 즉시 실행되지 않아야 한다.
+        // 버그: 이전엔 now-24h를 기준으로 삼아 크론이 과거에 발화했으면 즉시 due로 판정됐음.
+        let skill = make_schedule_skill("0 0 * * * *"); // every hour
+        assert!(
+            !is_due(&skill, None),
+            "New skill with no last_run must not fire immediately"
         );
     }
 
@@ -275,6 +362,7 @@ mod tests {
                 cron: Some(cron_expr.into()),
                 natural: None,
                 keyword: None,
+                run_at: None,
             }),
             chain: vec![],
             model: None,

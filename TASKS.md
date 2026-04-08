@@ -66,6 +66,55 @@
 
 ---
 
+## ISSUE01 수정 — Once Trigger + Due Fix + History Fix + News Quality
+
+> 스펙: `.ina/specs/think-issue01-once-trigger-due-fix-news.md`  
+> 플랜: `.claude/plans/issue01-once-trigger-due-fix-news.md`  
+> TDD 원칙: 각 항목은 실패 테스트 먼저 → 구현 → 통과 순서
+
+### I-1: 히스토리 재주입 수정 (원인 3) — `compaction.rs`
+
+- [x] **I-1-T** 실패 테스트: `agent_loop_uses_content_not_code` in `compaction.rs`
+- [x] **I-1** 구현: `compaction.rs:76` — `turn.code` → `turn.content`
+- [x] **I-1-V** `cargo test -p kittypaw-engine -- compaction` 통과
+
+### I-2: Cron Due 버그 수정 (원인 2) — `schedule/cron.rs`
+
+- [x] **I-2-T** 실패 테스트: `new_recurring_skill_not_immediately_due` in `schedule/mod.rs`
+- [x] **I-2** 구현: `cron.rs:34` — `now - 24h` → `now`
+- [x] **I-2-V** `cargo test -p kittypaw-engine -- schedule` 통과 (16/16)
+
+### I-3: SkillTrigger.run_at 필드 + is_once_due (원인 1 기반)
+
+- [x] **I-3-T** 실패 테스트 4개: `is_once_due_*` + `is_due_includes_once_trigger`
+- [x] **I-3** 구현: `skill.rs`에 `run_at` 필드, `cron.rs`에 `is_once_due` + `is_due` 업데이트
+- [x] **I-3-V** `cargo test -p kittypaw-core && cargo test -p kittypaw-engine` 통과 (20/20)
+
+### I-4: parse_once_delay 파싱 — `teach_loop.rs`
+
+- [x] **I-4-T** 실패 테스트: `parse_once_delay_valid_formats`, `_minimum_one_minute`, `_invalid_format`
+- [x] **I-4** 구현: `parse_once_delay()` + `MAX_DELAY_MINUTES` 상한 (오버플로우 방지)
+- [x] **I-4-V** `cargo test -p kittypaw-engine -- teach_loop` 통과 (15/15)
+
+### I-5: Skill.create "once" 케이스 — `skill_executor/skill_mgmt.rs`
+
+- [x] **I-5** 구현: `skill_mgmt.rs`에 "once" 분기 추가
+- [x] **I-5-V** `cargo test -p kittypaw-engine` 통과 (79/79)
+- [x] **I-5-P** SYSTEM_PROMPT `## When to create a skill` 섹션에 "once" 예시 + 규칙 추가
+
+### I-6: Schedule 루프 once 처리 + 실행 후 삭제
+
+- [x] **I-6** 구현: `schedule/mod.rs` — once 필터 + 실행 후 delete_skill
+- [x] **I-6-V** `cargo test --workspace` 통과 (전체 0 failed)
+
+### I-7: SYSTEM_PROMPT 뉴스 품질 규칙 (원인 4)
+
+- [x] **I-7-T** 실패 테스트: `system_prompt_enforces_news_fetch_pipeline`
+- [x] **I-7** 구현: `## News & content quality` 섹션 추가 + CORRECT 예시 교체
+- [x] **I-7-V** `cargo test -p kittypaw-engine -- agent_loop` 통과 (8/8)
+
+---
+
 ## v1 잔여
 
 - [ ] macOS 코드 사이닝 (Apple Developer $99/yr)

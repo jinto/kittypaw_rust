@@ -39,6 +39,21 @@ pub(super) async fn execute_skill_mgmt(call: &SkillCall) -> Result<serde_json::V
                     cron: Some(cron_expr),
                     natural: Some(description.to_string()),
                     keyword: None,
+                    run_at: None,
+                }
+            } else if trigger_type == "once" {
+                if trigger_value.is_empty() {
+                    return Err(KittypawError::Sandbox(
+                        "Skill.create: once trigger requires a delay as the 5th argument (e.g. \"2m\", \"10m\", \"1h\")".into(),
+                    ));
+                }
+                let run_at = crate::teach_loop::parse_once_delay(trigger_value)?;
+                SkillTrigger {
+                    trigger_type: "once".into(),
+                    cron: None,
+                    natural: Some(trigger_value.to_string()),
+                    keyword: None,
+                    run_at: Some(run_at.to_rfc3339()),
                 }
             } else {
                 SkillTrigger {
@@ -50,6 +65,7 @@ pub(super) async fn execute_skill_mgmt(call: &SkillCall) -> Result<serde_json::V
                     } else {
                         Some(trigger_value.to_string())
                     },
+                    run_at: None,
                 }
             };
 
