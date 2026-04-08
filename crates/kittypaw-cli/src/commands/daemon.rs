@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 const PLIST_LABEL: &str = "com.kittypaw.daemon";
+#[cfg(target_os = "linux")]
 const SYSTEMD_UNIT: &str = "kittypaw.service";
 
 fn home_dir() -> PathBuf {
@@ -21,10 +22,12 @@ fn plist_path() -> PathBuf {
         .join(format!("{PLIST_LABEL}.plist"))
 }
 
+#[cfg(target_os = "linux")]
 fn systemd_user_dir() -> PathBuf {
     home_dir().join(".config/systemd/user")
 }
 
+#[cfg(target_os = "linux")]
 fn systemd_unit_path() -> PathBuf {
     systemd_user_dir().join(SYSTEMD_UNIT)
 }

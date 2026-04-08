@@ -45,7 +45,7 @@ impl McpRegistry {
                         cmd.env(k, v);
                     }
                 }))
-                .map_err(|e| KittypawError::Io(e))?;
+                .map_err(KittypawError::Io)?;
 
             let service = ().serve(transport).await.map_err(|e| {
                 KittypawError::Config(format!("MCP server '{name}' handshake failed: {e}"))
@@ -126,11 +126,7 @@ fn call_tool_result_to_json(result: CallToolResult) -> serde_json::Value {
         .iter()
         .filter_map(|c| {
             // Content can be Text, Image, Audio, Resource — extract text
-            if let Some(text) = c.as_text() {
-                Some(text.text.clone())
-            } else {
-                None
-            }
+            c.as_text().map(|text| text.text.clone())
         })
         .collect();
 
