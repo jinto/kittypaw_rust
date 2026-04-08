@@ -956,6 +956,7 @@ async fn test_reflection_full_pipeline() {
         max_input_chars: 4000,
         intent_threshold: 3,
         ttl_days: 7,
+        weekly_report_day: 0,
     };
 
     // Run reflection

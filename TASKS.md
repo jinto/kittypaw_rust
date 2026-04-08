@@ -149,7 +149,7 @@
 
 ---
 
-## Wow #2: 학습하는 엔진 (Adaptive Engine) ← 현재
+## Wow #2: 학습하는 엔진 (Adaptive Engine) ✅
 
 Spec: `.ina/specs/20260409-think-adaptive-engine.md`
 Plan: `.claude/plans/adaptive-engine.md`
@@ -164,6 +164,20 @@ Plan: `.claude/plans/adaptive-engine.md`
 
 ### Plan 3: CLI + 승인 흐름 ✅
 - [x] kittypaw reflection list/approve/reject/clear CLI
+
+---
+
+## Wow #3: 적응형 취향 반영 (Adaptive Preference) ← 현재
+
+Plan: `.claude/plans/adaptive-preference.md`
+
+### Plan 1: Topic Preference 추출 + 저장 ✅
+- [x] REFLECTION_PROMPT 확장 + topic 파싱/저장
+- [x] "User Preferences" 섹션 + list_topic_preferences
+
+### Plan 2: 주간 리포트 + CLI ✅
+- [x] 주간 리포트 발송 (요일 체크 + notification)
+- [x] CLI weekly-report + E2E 확장
 
 ---
 

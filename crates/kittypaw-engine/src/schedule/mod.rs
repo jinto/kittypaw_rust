@@ -131,6 +131,31 @@ pub async fn run_schedule_loop(
                 run_reflection_tick(config, &store, &notifier).await;
                 let s = store.lock().await;
                 let _ = s.set_last_run("_reflection_", chrono::Utc::now());
+
+                // Weekly report: send on configured day of week
+                let today = {
+                    use chrono::Datelike;
+                    chrono::Utc::now()
+                        .date_naive()
+                        .weekday()
+                        .num_days_from_sunday()
+                };
+                if today == config.reflection.weekly_report_day {
+                    let prefs = s.list_topic_preferences(10).unwrap_or_default();
+                    let parsed: Vec<(String, u32)> = prefs
+                        .into_iter()
+                        .filter_map(|(topic, json_str)| {
+                            let v: serde_json::Value = serde_json::from_str(&json_str).ok()?;
+                            let count = v["count"].as_u64()? as u32;
+                            Some((topic, count))
+                        })
+                        .collect();
+                    if !parsed.is_empty() {
+                        let report = crate::reflection::build_weekly_report(&parsed);
+                        notifier.notify_weekly_report(&report);
+                        tracing::info!("Weekly preference report sent");
+                    }
+                }
             }
         }
 
@@ -223,9 +248,9 @@ async fn run_reflection_tick(
     }
 
     // Phase 2: LLM call (no lock held)
-    let groups =
+    let (groups, topics) =
         match crate::reflection::call_llm_grouping(&*provider, &input, &config.reflection).await {
-            Ok(g) => g,
+            Ok(r) => r,
             Err(e) => {
                 tracing::error!("Reflection LLM failed: {e}");
                 return;
@@ -234,7 +259,13 @@ async fn run_reflection_tick(
 
     // Phase 3: Write (lock → write → unlock)
     let s = store.lock().await;
-    match crate::reflection::write_reflection_results(&*s, groups, &input, &config.reflection) {
+    match crate::reflection::write_reflection_results(
+        &*s,
+        groups,
+        topics,
+        &input,
+        &config.reflection,
+    ) {
         Ok(result) => {
             for sg in &result.suggestions {
                 tracing::info!(

@@ -163,6 +163,9 @@ pub struct ReflectionConfig {
     /// Days before unused reflection data expires (default: 7).
     #[serde(default = "default_reflection_ttl")]
     pub ttl_days: u32,
+    /// Day of week for weekly preference report (0=Sun, 1=Mon, ..., 6=Sat). Default: 0 (Sunday).
+    #[serde(default)]
+    pub weekly_report_day: u32,
 }
 
 fn default_reflection_cron() -> String {
@@ -186,6 +189,7 @@ impl Default for ReflectionConfig {
             max_input_chars: default_reflection_max_chars(),
             intent_threshold: default_reflection_threshold(),
             ttl_days: default_reflection_ttl(),
+            weekly_report_day: 0,
         }
     }
 }

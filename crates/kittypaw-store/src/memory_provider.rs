@@ -54,7 +54,23 @@ impl MemoryProvider for Store {
             lines.push(format!("## Learned Patterns\n{}", entries.join("\n")));
         }
 
-        // 3. Recent failures (last 24h)
+        // 3. User topic preferences (up to 5)
+        let topic_prefs = self.list_topic_preferences(5)?;
+        if !topic_prefs.is_empty() {
+            let entries: Vec<String> = topic_prefs
+                .iter()
+                .filter_map(|(topic, json_str)| {
+                    let v: serde_json::Value = serde_json::from_str(json_str).ok()?;
+                    let count = v["count"].as_u64().unwrap_or(0);
+                    Some(format!("- {topic} ({count} mentions)"))
+                })
+                .collect();
+            if !entries.is_empty() {
+                lines.push(format!("## User Preferences\n{}", entries.join("\n")));
+            }
+        }
+
+        // 4. Recent failures (last 24h)
         let mut stmt = self.conn.prepare(
             "SELECT skill_name, result_summary, started_at FROM execution_history \
              WHERE success = 0 \
@@ -250,6 +266,43 @@ mod tests {
         let remaining = store.list_reflection_intents(10).unwrap();
         assert_eq!(remaining.len(), 1);
         assert!(remaining[0].1.contains("새 패턴"));
+
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn test_user_preferences_section() {
+        let (store, p) = temp_store();
+        store
+            .memory_save(
+                "preference:topic:AI",
+                r#"{"count":12,"updated":"2026-04-09"}"#,
+                "reflection",
+            )
+            .unwrap();
+        store
+            .memory_save(
+                "preference:topic:경제",
+                r#"{"count":5,"updated":"2026-04-09"}"#,
+                "reflection",
+            )
+            .unwrap();
+
+        let lines = store.memory_context_lines().unwrap();
+        let joined = lines.join("\n");
+        assert!(
+            joined.contains("User Preferences"),
+            "should have User Preferences section"
+        );
+        assert!(joined.contains("AI (12 mentions)"));
+        assert!(joined.contains("경제 (5 mentions)"));
+
+        // Preference keys should NOT appear in Remembered Facts
+        let shared = store.memory_recall("").unwrap();
+        assert!(
+            !shared.iter().any(|(k, _)| k.starts_with("preference:")),
+            "preference keys should not leak into shared context"
+        );
 
         let _ = std::fs::remove_file(&p);
     }

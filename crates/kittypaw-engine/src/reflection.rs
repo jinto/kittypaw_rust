@@ -15,26 +15,42 @@ pub struct ReflectionSuggestion {
     pub message_samples: Vec<String>,
 }
 
+/// A topic preference extracted from user conversations.
+#[derive(Debug, Clone)]
+pub struct TopicPreference {
+    pub topic: String,
+    pub count: u32,
+}
+
 /// Result of a reflection run.
 #[derive(Debug)]
 pub struct ReflectionResult {
     pub suggestions: Vec<ReflectionSuggestion>,
+    pub topics: Vec<TopicPreference>,
     pub swept: usize,
 }
 
-const REFLECTION_PROMPT: &str = r#"You are a pattern analyzer. Given a list of user messages from the last 24 hours, group them by semantic intent.
+const REFLECTION_PROMPT: &str = r#"You are a pattern analyzer. Given a list of user messages from the last 24 hours, perform TWO analyses:
 
-## Rules
+## Analysis 1: Intent Grouping
 - Group messages that express the SAME intent (even if worded differently)
 - Each group gets an `intent_label` (short Korean phrase describing the intent)
 - Only include groups with 2+ messages
+
+## Analysis 2: Topic Preferences
+- Identify the main TOPICS the user is interested in (e.g., "AI", "경제", "날씨", "스포츠")
+- Count how many messages relate to each topic
+- Only include topics mentioned 2+ times
+
+## Rules
 - Respond ONLY with valid JSON, no markdown fences
+- Topics are broad categories, intents are specific actions
 
 ## Already rejected intents (DO NOT suggest again)
 {rejected_list}
 
 ## Output format
-{"groups":[{"intent_label":"환율 조회","messages":["환율 알려줘","달러 가격"],"count":2}]}"#;
+{"groups":[{"intent_label":"환율 조회","messages":["환율 알려줘","달러 가격"],"count":2}],"topics":[{"topic":"경제","count":3}]}"#;
 
 /// Run the daily reflection analysis.
 ///
@@ -67,15 +83,16 @@ pub async fn run_reflection(
         let swept = store.delete_expired_reflection(config.ttl_days)?;
         return Ok(ReflectionResult {
             suggestions: vec![],
+            topics: vec![],
             swept,
         });
     }
 
     // Phase 2: LLM call (await, no &Store held)
-    let groups = call_llm_grouping(provider, &input, config).await?;
+    let (groups, topics) = call_llm_grouping(provider, &input, config).await?;
 
     // Phase 3: Write (no await)
-    write_reflection_results(store, groups, &input, config)
+    write_reflection_results(store, groups, topics, &input, config)
 }
 
 pub fn read_reflection_input(store: &Store, config: &ReflectionConfig) -> Result<ReflectionInput> {
@@ -93,7 +110,7 @@ pub async fn call_llm_grouping(
     provider: &dyn LlmProvider,
     input: &ReflectionInput,
     config: &ReflectionConfig,
-) -> Result<Vec<IntentGroup>> {
+) -> Result<(Vec<IntentGroup>, Vec<TopicPreference>)> {
     let rejected_labels: Vec<&str> = input.rejected.iter().map(|(_, v)| v.as_str()).collect();
     let rejected_list = if rejected_labels.is_empty() {
         "(none)".to_string()
@@ -126,14 +143,15 @@ pub async fn call_llm_grouping(
 
     let response = provider.generate(&llm_messages).await?;
     let raw = response.content.trim();
-    let mut groups = parse_intent_groups(raw)?;
+    let (mut groups, topics) = parse_reflection_response(raw)?;
     groups.retain(|g| g.count >= config.intent_threshold);
-    Ok(groups)
+    Ok((groups, topics))
 }
 
 pub fn write_reflection_results(
     store: &Store,
     groups: Vec<IntentGroup>,
+    topics: Vec<TopicPreference>,
     input: &ReflectionInput,
     config: &ReflectionConfig,
 ) -> Result<ReflectionResult> {
@@ -175,9 +193,47 @@ pub fn write_reflection_results(
         });
     }
 
+    // Store topic preferences
+    let stored_topics: Vec<TopicPreference> = topics.into_iter().filter(|t| t.count >= 2).collect();
+    for tp in &stored_topics {
+        let now = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let json = serde_json::json!({"count": tp.count, "updated": now});
+        store.set_user_context(
+            &format!("preference:topic:{}", tp.topic),
+            &json.to_string(),
+            "reflection",
+        )?;
+    }
+
     let swept = store.delete_expired_reflection(config.ttl_days)?;
 
-    Ok(ReflectionResult { suggestions, swept })
+    Ok(ReflectionResult {
+        suggestions,
+        topics: stored_topics,
+        swept,
+    })
+}
+
+/// Build a weekly preference report string from topic preferences.
+/// Domain-agnostic — reports user interest distribution without assuming any specific skill.
+pub fn build_weekly_report(prefs: &[(String, u32)]) -> String {
+    if prefs.is_empty() {
+        return "이번 주 분석할 대화 데이터가 없습니다.".to_string();
+    }
+
+    let total: u32 = prefs.iter().map(|(_, c)| c).sum();
+    let mut lines = vec!["📊 *주간 관심사 리포트*\n".to_string()];
+
+    for (topic, count) in prefs {
+        let pct = if total > 0 {
+            (*count as f64 / total as f64 * 100.0) as u32
+        } else {
+            0
+        };
+        lines.push(format!("  • {} — {}% ({count}회)", topic, pct));
+    }
+
+    lines.join("\n")
 }
 
 /// Compute a stable hash for an intent label.
@@ -194,8 +250,7 @@ pub struct IntentGroup {
     pub count: u32,
 }
 
-fn parse_intent_groups(raw: &str) -> Result<Vec<IntentGroup>> {
-    // Strip markdown fences if present
+fn parse_reflection_response(raw: &str) -> Result<(Vec<IntentGroup>, Vec<TopicPreference>)> {
     let json_str = kittypaw_llm::util::strip_code_fences(raw);
 
     let parsed: serde_json::Value = serde_json::from_str(&json_str).map_err(|e| {
@@ -204,11 +259,12 @@ fn parse_intent_groups(raw: &str) -> Result<Vec<IntentGroup>> {
         ))
     })?;
 
+    // Parse intent groups
     let groups = parsed["groups"]
         .as_array()
         .ok_or_else(|| KittypawError::Skill("Reflection: missing 'groups' array".into()))?;
 
-    let mut result = Vec::new();
+    let mut intent_groups = Vec::new();
     for g in groups {
         let label = g["intent_label"].as_str().unwrap_or_default().to_string();
         let count = g["count"].as_u64().unwrap_or(0) as u32;
@@ -222,7 +278,7 @@ fn parse_intent_groups(raw: &str) -> Result<Vec<IntentGroup>> {
             .unwrap_or_default();
 
         if !label.is_empty() && count > 0 {
-            result.push(IntentGroup {
+            intent_groups.push(IntentGroup {
                 intent_label: label,
                 messages,
                 count,
@@ -230,7 +286,25 @@ fn parse_intent_groups(raw: &str) -> Result<Vec<IntentGroup>> {
         }
     }
 
-    Ok(result)
+    // Parse topic preferences (optional — graceful fallback if missing)
+    let topics = parsed["topics"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|t| {
+                    let topic = t["topic"].as_str()?.to_string();
+                    let count = t["count"].as_u64().unwrap_or(0) as u32;
+                    if !topic.is_empty() && count > 0 {
+                        Some(TopicPreference { topic, count })
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok((intent_groups, topics))
 }
 
 #[cfg(test)]
@@ -285,6 +359,7 @@ mod tests {
             max_input_chars: 4000,
             intent_threshold: 3,
             ttl_days: 7,
+            weekly_report_day: 0,
         }
     }
 
@@ -320,16 +395,68 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_intent_groups() {
+    fn test_parse_reflection_response() {
         let json = r#"{"groups":[
             {"intent_label":"환율 조회","messages":["환율 알려줘","달러 가격","환율 얼마야"],"count":3},
             {"intent_label":"인사","messages":["안녕","하이"],"count":2}
-        ]}"#;
-        let groups = parse_intent_groups(json).unwrap();
+        ],"topics":[{"topic":"경제","count":5},{"topic":"AI","count":3}]}"#;
+        let (groups, topics) = parse_reflection_response(json).unwrap();
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].intent_label, "환율 조회");
         assert_eq!(groups[0].count, 3);
-        assert_eq!(groups[1].count, 2);
+        assert_eq!(topics.len(), 2);
+        assert_eq!(topics[0].topic, "경제");
+        assert_eq!(topics[0].count, 5);
+    }
+
+    #[test]
+    fn test_parse_reflection_response_no_topics() {
+        // Backward compatibility: topics array missing
+        let json = r#"{"groups":[{"intent_label":"환율","messages":["환율"],"count":1}]}"#;
+        let (groups, topics) = parse_reflection_response(json).unwrap();
+        assert_eq!(groups.len(), 1);
+        assert!(topics.is_empty(), "missing topics should be empty vec");
+    }
+
+    #[tokio::test]
+    async fn test_reflection_stores_topic_preferences() {
+        let mock = MockProvider::with_response(
+            r#"{"groups":[],"topics":[{"topic":"AI","count":5},{"topic":"경제","count":3}]}"#,
+        );
+        let (store, p) = temp_store();
+        insert_user_messages(&store, &["AI 뉴스", "경제 뉴스"]);
+
+        let config = test_config();
+        let result = run_reflection(&store, &mock, &config).await.unwrap();
+        assert_eq!(result.topics.len(), 2);
+
+        // Verify stored
+        let ai = store
+            .get_user_context("preference:topic:AI")
+            .unwrap()
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&ai).unwrap();
+        assert_eq!(parsed["count"], 5);
+
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn test_build_weekly_report() {
+        let prefs = vec![("AI".into(), 12), ("경제".into(), 5), ("날씨".into(), 3)];
+        let report = build_weekly_report(&prefs);
+        assert!(report.contains("주간 관심사 리포트"));
+        assert!(report.contains("AI"));
+        assert!(report.contains("60%")); // 12/20 = 60%
+        assert!(report.contains("경제"));
+        // Should NOT contain "브리핑"
+        assert!(!report.contains("브리핑"), "must not be domain-specific");
+    }
+
+    #[test]
+    fn test_build_weekly_report_empty() {
+        let report = build_weekly_report(&[]);
+        assert!(report.contains("분석할 대화 데이터가 없습니다"));
     }
 
     #[tokio::test]

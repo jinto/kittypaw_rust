@@ -188,6 +188,31 @@ pub(crate) async fn run_reflection_now() {
     }
 }
 
+/// Print or send the weekly preference report.
+pub(crate) fn run_weekly_report() {
+    let db_path = db_path();
+    let store = match Store::open(&db_path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Database error: {e}");
+            return;
+        }
+    };
+
+    let prefs = store.list_topic_preferences(10).unwrap_or_default();
+    let parsed: Vec<(String, u32)> = prefs
+        .into_iter()
+        .filter_map(|(topic, json_str)| {
+            let v: serde_json::Value = serde_json::from_str(&json_str).ok()?;
+            let count = v["count"].as_u64()? as u32;
+            Some((topic, count))
+        })
+        .collect();
+
+    let report = kittypaw_engine::reflection::build_weekly_report(&parsed);
+    println!("{report}");
+}
+
 pub(crate) fn run_reflection_clear() {
     let db_path = db_path();
     let store = match Store::open(&db_path) {

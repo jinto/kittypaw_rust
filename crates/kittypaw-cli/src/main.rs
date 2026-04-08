@@ -199,6 +199,8 @@ enum ReflectionCommands {
     Clear,
     /// Manually run one reflection cycle (for debugging / E2E testing)
     Run,
+    /// Show or send the weekly preference report
+    WeeklyReport,
 }
 
 #[derive(Subcommand)]
@@ -358,6 +360,7 @@ async fn main() {
             }
             ReflectionCommands::Clear => commands::reflection::run_reflection_clear(),
             ReflectionCommands::Run => commands::reflection::run_reflection_now().await,
+            ReflectionCommands::WeeklyReport => commands::reflection::run_weekly_report(),
         },
         Some(Commands::TestEvent {
             message,

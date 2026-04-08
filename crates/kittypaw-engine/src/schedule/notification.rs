@@ -134,6 +134,10 @@ impl NotificationSender {
         ));
     }
 
+    pub fn notify_weekly_report(&self, report: &str) {
+        self.send(report);
+    }
+
     pub fn notify_reflection_suggestion(&self, intent_label: &str, count: u32, hash: &str) {
         self.send(&format!(
             "💡 *패턴 발견*: {label}을(를) 자주 하시네요 (최근 {count}회).\n\

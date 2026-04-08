@@ -51,7 +51,8 @@ impl Store {
                AND key NOT LIKE 'failure_hint:%' \
                AND key NOT LIKE 'reflection:%' \
                AND key NOT LIKE 'rejected_intent:%' \
-               AND key NOT LIKE 'suggest_candidate:%'",
+               AND key NOT LIKE 'suggest_candidate:%' \
+               AND key NOT LIKE 'preference:%'",
         )?;
         let map: HashMap<String, String> = stmt
             .query_map([], |row| {
@@ -72,6 +73,28 @@ impl Store {
         )?;
         let rows = stmt
             .query_map(params![limit as i64], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// List topic preferences for "User Preferences" prompt section.
+    /// Returns Vec<(topic_name, json_value)> ordered by most recently updated.
+    pub fn list_topic_preferences(&self, limit: usize) -> Result<Vec<(String, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT key, value FROM user_context \
+             WHERE key LIKE 'preference:topic:%' \
+             ORDER BY updated_at DESC LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map(params![limit as i64], |row| {
+                let key: String = row.get(0)?;
+                let value: String = row.get(1)?;
+                let topic = key
+                    .strip_prefix("preference:topic:")
+                    .unwrap_or(&key)
+                    .to_string();
+                Ok((topic, value))
+            })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
