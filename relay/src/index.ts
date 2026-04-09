@@ -1,8 +1,6 @@
-import { verifyHmac } from "./hmac";
-
 export interface Env {
   MESSAGES: KVNamespace;
-  KAKAO_SECRET: string;
+  WEBHOOK_SECRET: string;
 }
 
 interface KakaoPayload {
@@ -25,43 +23,52 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    // POST /webhook?token={user_token}
-    if (request.method === "POST" && url.pathname === "/webhook") {
+    if (request.method !== "POST") {
+      return new Response("Not Found", { status: 404 });
+    }
+
+    if (url.pathname === "/register") {
+      return handleRegister(env);
+    }
+
+    if (url.pathname === "/webhook") {
       return handleWebhook(request, env, url);
     }
 
-    // POST /poll/{user_token}
     const pollMatch = url.pathname.match(/^\/poll\/(.+)$/);
-    if (request.method === "POST" && pollMatch) {
-      const userToken = pollMatch[1];
-      return handlePoll(env, userToken);
+    if (pollMatch) {
+      return handlePoll(env, pollMatch[1]);
     }
 
     return new Response("Not Found", { status: 404 });
   },
 };
 
+async function handleRegister(env: Env): Promise<Response> {
+  const token = crypto.randomUUID().replace(/-/g, "");
+  const pairCode = String(Math.floor(100000 + Math.random() * 900000));
+
+  await Promise.all([
+    env.MESSAGES.put(`tok:${token}`, "1"),
+    env.MESSAGES.put(`pair:${pairCode}`, token, { expirationTtl: 300 }),
+  ]);
+
+  return Response.json({ token, pair_code: pairCode });
+}
+
 async function handleWebhook(
   request: Request,
   env: Env,
   url: URL
 ): Promise<Response> {
-  const secret = env.KAKAO_SECRET;
-  if (!secret) {
-    return new Response("Server misconfigured: KAKAO_SECRET not set", { status: 500 });
-  }
-
-  const body = await request.text();
-  const signature = request.headers.get("X-Kakao-Signature") ?? "";
-
-  const valid = await verifyHmac(secret, body, signature);
-  if (!valid) {
+  const secret = url.searchParams.get("secret");
+  if (!env.WEBHOOK_SECRET || !secret || secret !== env.WEBHOOK_SECRET) {
     return new Response("Unauthorized", { status: 401 });
   }
 
   let payload: KakaoPayload;
   try {
-    payload = JSON.parse(body) as KakaoPayload;
+    payload = JSON.parse(await request.text()) as KakaoPayload;
   } catch {
     return new Response("Bad Request", { status: 400 });
   }
@@ -75,10 +82,26 @@ async function handleWebhook(
     return new Response("Bad Request: missing required fields", { status: 400 });
   }
 
-  // user_token comes from the required query parameter — reject if missing
-  const userToken = url.searchParams.get("token");
-  if (!userToken) {
-    return new Response("Bad Request: missing ?token= parameter", { status: 400 });
+  // Pairing: 6-digit message → attempt to match a pair code
+  if (/^\d{6}$/.test(utterance)) {
+    return handlePairing(env, utterance, userId);
+  }
+
+  // Routing: look up user → relay token mapping
+  const relayToken = await env.MESSAGES.get(`user:${userId}`);
+  if (!relayToken) {
+    return Response.json({
+      version: "2.0",
+      template: {
+        outputs: [
+          {
+            simpleText: {
+              text: "KittyPaw와 연결이 필요합니다. KittyPaw 앱에서 연결 코드를 확인하세요.",
+            },
+          },
+        ],
+      },
+    });
   }
 
   const msg: StoredMessage = {
@@ -88,18 +111,59 @@ async function handleWebhook(
     action_id: actionId,
   };
 
-  // KV key = {user_token}:{action_id} for idempotency
-  // TTL: 300 seconds — generous enough to survive polling backoff (max ~60s)
-  const kvKey = `${userToken}:${actionId}`;
-  await env.MESSAGES.put(kvKey, JSON.stringify(msg), { expirationTtl: 300 });
+  await env.MESSAGES.put(
+    `msg:${relayToken}:${actionId}`,
+    JSON.stringify(msg),
+    { expirationTtl: 300 }
+  );
 
-  // Immediate ACK to Kakao — actual response goes via callbackUrl
   return Response.json({ version: "2.0", useCallback: true });
 }
 
-async function handlePoll(env: Env, userToken: string): Promise<Response> {
-  // List keys with the user_token prefix to find pending messages
-  const list = await env.MESSAGES.list({ prefix: `${userToken}:`, limit: 1 });
+async function handlePairing(
+  env: Env,
+  pairCode: string,
+  kakaoUserId: string
+): Promise<Response> {
+  const token = await env.MESSAGES.get(`pair:${pairCode}`);
+  if (!token) {
+    return Response.json({
+      version: "2.0",
+      template: {
+        outputs: [
+          {
+            simpleText: {
+              text: "유효하지 않은 연결 코드입니다. KittyPaw 앱에서 새 코드를 확인하세요.",
+            },
+          },
+        ],
+      },
+    });
+  }
+
+  await Promise.all([
+    env.MESSAGES.put(`user:${kakaoUserId}`, token),
+    env.MESSAGES.delete(`pair:${pairCode}`),
+  ]);
+
+  return Response.json({
+    version: "2.0",
+    template: {
+      outputs: [{ simpleText: { text: "연결 완료!" } }],
+    },
+  });
+}
+
+async function handlePoll(env: Env, relayToken: string): Promise<Response> {
+  const tokenExists = await env.MESSAGES.get(`tok:${relayToken}`);
+  if (!tokenExists) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  const list = await env.MESSAGES.list({
+    prefix: `msg:${relayToken}:`,
+    limit: 1,
+  });
 
   if (list.keys.length === 0) {
     return new Response(null, { status: 204 });
@@ -107,12 +171,10 @@ async function handlePoll(env: Env, userToken: string): Promise<Response> {
 
   const key = list.keys[0].name;
   const value = await env.MESSAGES.get(key);
-
   if (!value) {
     return new Response(null, { status: 204 });
   }
 
-  // Atomic: delete immediately after read to prevent duplicate delivery
   await env.MESSAGES.delete(key);
 
   let parsed: unknown;
