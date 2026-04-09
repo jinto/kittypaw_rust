@@ -872,6 +872,144 @@ footer {
 .footer-sep { color: var(--slate-700); }
 
 /* ============================================================
+   HERO H1 SUB (quote line)
+============================================================ */
+.hero-h1-sub {
+  font-size: 0.55em;
+  font-weight: 500;
+  color: rgba(255,255,255,0.6);
+  display: block;
+  margin-top: 4px;
+  letter-spacing: 0;
+}
+
+/* ============================================================
+   PROOF STRIP — growth timeline dots
+============================================================ */
+.proof-dot-done {
+  background: var(--orange-400, #fb923c);
+  border-color: var(--orange-400, #fb923c);
+}
+.proof-dot-active {
+  background: #ff8c00;
+  border-color: #ff8c00;
+  box-shadow: 0 0 6px rgba(255,140,0,0.7);
+}
+
+/* ============================================================
+   GROW SECTION (Wow #2, #3)
+============================================================ */
+.grow-section {
+  background: linear-gradient(160deg, #0f172a 0%, #1e1b4b 100%);
+  padding: 80px 0;
+}
+.grow-eyebrow { color: #f59e0b !important; }
+.grow-title { color: #fff !important; }
+.grow-sub { color: rgba(255,255,255,0.65) !important; }
+
+.grow-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+  margin-top: 48px;
+}
+
+.grow-card {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 16px;
+  padding: 28px;
+  color: #fff;
+  transition: border-color .2s, background .2s;
+}
+.grow-card:hover {
+  background: rgba(255,255,255,0.08);
+  border-color: rgba(255,140,0,0.35);
+}
+
+.grow-card-icon { font-size: 2rem; margin-bottom: 12px; }
+.grow-card h3 { font-size: 1.1rem; font-weight: 700; margin-bottom: 8px; color: #fff; }
+.grow-card > p { font-size: 0.88rem; color: rgba(255,255,255,0.65); margin-bottom: 20px; line-height: 1.6; }
+
+.grow-card-example { margin-top: auto; }
+
+/* Chat bubbles */
+.grow-example-chat { display: flex; flex-direction: column; gap: 7px; }
+.grow-bubble-user {
+  align-self: flex-end;
+  background: rgba(255,255,255,0.1);
+  border-radius: 12px 12px 2px 12px;
+  padding: 7px 12px;
+  font-size: 0.8rem;
+  color: rgba(255,255,255,0.85);
+  max-width: 88%;
+}
+.grow-bubble-ai {
+  align-self: flex-start;
+  background: linear-gradient(135deg, rgba(251,146,60,0.22), rgba(239,68,68,0.12));
+  border: 1px solid rgba(251,146,60,0.35);
+  border-radius: 2px 12px 12px 12px;
+  padding: 10px 12px;
+  font-size: 0.8rem;
+  color: rgba(255,255,255,0.92);
+  max-width: 88%;
+  line-height: 1.5;
+}
+
+/* Weekly report */
+.grow-report {
+  background: rgba(0,0,0,0.3);
+  border-radius: 10px;
+  padding: 14px;
+}
+.grow-report-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: rgba(255,255,255,0.9);
+  margin-bottom: 12px;
+}
+.grow-report-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 9px;
+  font-size: 0.78rem;
+}
+.grow-bar {
+  display: inline-block;
+  height: 6px;
+  background: linear-gradient(90deg, #f59e0b, #f97316);
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.grow-topic { color: rgba(255,255,255,0.75); flex: 1; }
+.grow-pct { font-weight: 700; color: #f59e0b; }
+
+/* Timeline */
+.grow-timeline { display: flex; flex-direction: column; gap: 14px; }
+.grow-tl-item {
+  display: grid;
+  grid-template-columns: 12px 58px 1fr;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.82rem;
+}
+.grow-tl-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.2);
+  background: transparent;
+}
+.grow-tl-done { background: rgba(251,146,60,0.8); border-color: rgba(251,146,60,0.8); }
+.grow-tl-active { background: #f59e0b; border-color: #f59e0b; box-shadow: 0 0 8px rgba(245,158,11,0.6); }
+.grow-tl-label { color: rgba(255,255,255,0.45); font-size: 0.75rem; }
+.grow-tl-text { color: rgba(255,255,255,0.85); }
+
+/* Compare table highlight rows */
+.compare-highlight { background: rgba(245,158,11,0.07); }
+.compare-highlight td:first-child { font-weight: 600; color: #f59e0b; }
+
+/* ============================================================
    RESPONSIVE
 ============================================================ */
 @media (max-width: 768px) {
@@ -890,6 +1028,7 @@ footer {
   .hero h1 { letter-spacing: -.5px; }
   .features-grid { grid-template-columns: 1fr; }
   .usecases-grid { grid-template-columns: 1fr; }
+  .grow-cards { grid-template-columns: 1fr; }
   .skills-grid { grid-template-columns: repeat(2, 1fr); }
   .tech-grid { grid-template-columns: 1fr 1fr; }
 }

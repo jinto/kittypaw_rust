@@ -173,7 +173,7 @@ async fn call_llm_for_polish(
             .header("content-type", "application/json")
             .json(&serde_json::json!({
                 "model": model,
-                "max_tokens": 512,
+                "max_tokens": 1024,
                 "messages": [{"role": "user", "content": prompt}]
             }));
         if !api_key.is_empty() {
@@ -190,7 +190,7 @@ async fn call_llm_for_polish(
             .header("content-type", "application/json")
             .json(&serde_json::json!({
                 "model": model,
-                "max_tokens": 512,
+                "max_tokens": 1024,
                 "messages": [{"role": "user", "content": prompt}]
             }))
             .send()

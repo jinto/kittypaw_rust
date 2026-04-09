@@ -30,6 +30,15 @@ cargo clippy --workspace         # 린트
 - `kittypaw-app`: macOS 데스크탑 앱 (Tauri)
 - `kittypaw-tg`: Telegram 채널
 
+## 시스템 프롬프트 수정 규칙
+
+`crates/kittypaw-engine/src/agent_loop/mod.rs`의 `SYSTEM_PROMPT` 또는 예시 코드를 수정할 때:
+
+- **하드코딩 금지**: 예시 코드에 특정 언어(한국어 등), 숫자(3줄, 5개 등), 도메인/URL, 서비스명을 넣지 말 것
+- 예시는 **패턴**만 보여줄 것 — 구체적 값은 LLM이 컨텍스트에서 판단
+- 잘못된 예: `"핵심 뉴스 내용 3줄만 한국어로 추출해줘"` ← 상황 종속적
+- 올바른 예: `"Extract the key information for the user's request: " + userRequest`
+
 ## 참고
 
 - [TASKS.md](TASKS.md) — 현재 작업 목록

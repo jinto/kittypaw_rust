@@ -3,21 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>KittyPaw — 코드 없이 자동화하는 AI 데스크톱 앱</title>
-  <meta name="description" content="스킬 갤러리에서 설치하고, 설정만 채우면 끝. 매일 아침 시장 리포트, RSS 뉴스 요약, URL 모니터링... 전부 자동으로.">
+  <title>KittyPaw — 알아서 일하고, 쓸수록 나를 알아가는 AI</title>
+  <meta name="description" content="코드 없이 자동화. 반복 패턴을 감지하고 스킬을 먼저 제안합니다. 순수 Rust · 로컬 LLM 지원 · 오픈소스.">
   <link rel="canonical" href="https://kittypaw.app/">
   <link rel="alternate" hreflang="ko" href="https://kittypaw.app/">
   <link rel="alternate" hreflang="en" href="https://kittypaw.app/en/">
   <link rel="alternate" hreflang="ja" href="https://kittypaw.app/ja/">
   <link rel="alternate" hreflang="x-default" href="https://kittypaw.app/">
-  <meta property="og:title" content="KittyPaw — 코드 없이 자동화하는 AI 데스크톱 앱">
-  <meta property="og:description" content="스킬 갤러리에서 설치하고, 설정만 채우면 끝. 매일 아침 시장 리포트, RSS 뉴스 요약, URL 모니터링... 전부 자동으로.">
+  <meta property="og:title" content="KittyPaw — 알아서 일하고, 쓸수록 나를 알아가는 AI">
+  <meta property="og:description" content="같은 요청을 3번 하면 AI가 먼저 자동화를 제안합니다. 반복 패턴 감지, 주간 관심사 리포트, 자동 스킬 생성.">
   <meta property="og:url" content="https://kittypaw.app/">
   <meta property="og:type" content="website">
   <meta property="og:locale" content="ko_KR">
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="KittyPaw — 코드 없이 자동화하는 AI 데스크톱 앱">
-  <meta name="twitter:description" content="스킬 갤러리에서 설치하고, 설정만 채우면 끝. 매일 아침 시장 리포트, RSS 뉴스 요약, URL 모니터링... 전부 자동으로.">
+  <meta name="twitter:title" content="KittyPaw — 알아서 일하고, 쓸수록 나를 알아가는 AI">
+  <meta name="twitter:description" content="같은 요청을 3번 하면 AI가 먼저 자동화를 제안합니다. 반복 패턴 감지, 주간 관심사 리포트, 자동 스킬 생성.">
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -47,6 +47,7 @@
   </div>
   <div class="nav-links">
     <a href="#features" class="nav-link">기능</a>
+    <a href="#grow" class="nav-link">학습</a>
     <a href="#skills" class="nav-link">스킬</a>
     <a href="#tech" class="nav-link">기술</a>
     <a href="#compare" class="nav-link">비교</a>
@@ -76,13 +77,12 @@
     </div>
 
     <h1>
-      코드 없이<br>
-      <span class="accent-warm">AI가 알아서</span><br>
-      자동화합니다
+      알아서 일합니다<br>
+      <span class="accent-warm">쓸수록 나를 알아가는 AI</span>
     </h1>
     <p class="hero-sub">
-      스킬 갤러리에서 설치하고, 설정만 채우면 끝.<br>
-      매일 아침 시장 리포트, RSS 요약, URL 모니터링&hellip; 전부 자동으로.
+      스킬 갤러리에서 설치하면 코드 없이 바로 동작합니다.<br>
+      반복 패턴을 감지하고, 매주 내 관심사를 정리합니다.
     </p>
 
     <div class="hero-buttons">
@@ -118,20 +118,20 @@
 <div class="proof-strip">
   <div class="proof-inner">
     <div class="proof-item reveal">
-      <span class="proof-dot"></span>
-      오픈소스 프로젝트
+      <span class="proof-dot proof-dot-done"></span>
+      Day 1 — 갤러리에서 스킬 설치
     </div>
     <div class="proof-item reveal reveal-delay-1">
-      <span class="proof-dot"></span>
-      MIT 라이선스
+      <span class="proof-dot proof-dot-done"></span>
+      Day 3 — 반복 패턴 감지 시작
     </div>
     <div class="proof-item reveal reveal-delay-2">
-      <span class="proof-dot"></span>
-      GitHub에서 확인하세요
+      <span class="proof-dot proof-dot-active"></span>
+      1주일 후 — AI가 먼저 자동화 제안
     </div>
     <div class="proof-item reveal reveal-delay-3">
       <span class="proof-dot"></span>
-      macOS · Linux 지원
+      한 달 후 — 나만의 AI 비서 완성
     </div>
   </div>
 </div>
@@ -153,9 +153,9 @@
         <p>스킬 갤러리에서 원하는 자동화를 설치하고, 텔레그램 토큰만 넣으면 바로 동작합니다.</p>
       </div>
       <div class="feature-card reveal reveal-delay-2">
-        <div class="feature-icon-wrap">💬</div>
-        <h3>대화형 AI 비서</h3>
-        <p>"드라마 새 에피소드 알림 받고 싶어"라고 말하면, 맞는 스킬을 추천하거나 새로 만들어줍니다. 쓸수록 나를 알아가는 개인 비서.</p>
+        <div class="feature-icon-wrap">🧠</div>
+        <h3>학습하는 AI</h3>
+        <p>반복 패턴을 감지해 자동화를 제안하고, 매주 내 관심사를 분석합니다. 쓸수록 나를 알아가는 개인 비서.</p>
       </div>
       <div class="feature-card reveal reveal-delay-3">
         <div class="feature-icon-wrap">🔒</div>
@@ -177,6 +177,92 @@
         <h3>로컬 LLM 지원</h3>
         <p>Ollama, LM Studio 등 내 컴퓨터의 로컬 모델을 연결하세요. API 비용 0원. 데이터가 내 컴퓨터를 떠나지 않습니다.</p>
       </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     GROW SECTION (Wow #2 Reflection Loop + Wow #3 Adaptive Preference)
+============================================================ -->
+<section id="grow" class="grow-section section-full">
+  <div class="section section-center" style="padding-top: 0; padding-bottom: 0;">
+    <div class="reveal">
+      <span class="section-eyebrow grow-eyebrow">학습하는 AI</span>
+      <h2 class="section-title grow-title">KittyPaw는 기억합니다</h2>
+      <p class="section-sub grow-sub">쓸수록 내 습관을 이해하고, 내가 요청하기 전에 먼저 제안합니다</p>
+    </div>
+    <div class="grow-cards">
+
+      <div class="grow-card reveal reveal-delay-1">
+        <div class="grow-card-icon">🔄</div>
+        <h3>반복 패턴 감지</h3>
+        <p>같은 종류의 요청을 반복하면 AI가 패턴을 감지하고 자동화를 제안합니다.</p>
+        <div class="grow-card-example">
+          <div class="grow-example-chat">
+            <span class="grow-bubble-user">환율 알려줘</span>
+            <span class="grow-bubble-user">달러 가격이 얼마야?</span>
+            <span class="grow-bubble-user">오늘 환율 어때?</span>
+            <span class="grow-bubble-ai">💡 환율을 자주 확인하시네요.<br>매일 아침 자동으로 알려드릴까요?</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="grow-card reveal reveal-delay-2">
+        <div class="grow-card-icon">📊</div>
+        <h3>주간 관심사 리포트</h3>
+        <p>매주 일요일, 이번 주 내가 무엇에 관심을 가졌는지 자동으로 정리해 드립니다.</p>
+        <div class="grow-card-example">
+          <div class="grow-report">
+            <div class="grow-report-title">📊 이번 주 관심사 리포트</div>
+            <div class="grow-report-item">
+              <span class="grow-bar" style="width:65%"></span>
+              <span class="grow-topic">AI · 기술</span>
+              <span class="grow-pct">65%</span>
+            </div>
+            <div class="grow-report-item">
+              <span class="grow-bar" style="width:25%"></span>
+              <span class="grow-topic">경제 · 시장</span>
+              <span class="grow-pct">25%</span>
+            </div>
+            <div class="grow-report-item">
+              <span class="grow-bar" style="width:10%"></span>
+              <span class="grow-topic">날씨 · 생활</span>
+              <span class="grow-pct">10%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grow-card reveal reveal-delay-3">
+        <div class="grow-card-icon">⏱</div>
+        <h3>시간이 지날수록</h3>
+        <p>처음엔 내가 설치하지만, 1주일 후엔 AI가 먼저 제안하고 있습니다.</p>
+        <div class="grow-card-example">
+          <div class="grow-timeline">
+            <div class="grow-tl-item">
+              <span class="grow-tl-dot grow-tl-done"></span>
+              <span class="grow-tl-label">Day 1</span>
+              <span class="grow-tl-text">갤러리에서 스킬 설치</span>
+            </div>
+            <div class="grow-tl-item">
+              <span class="grow-tl-dot grow-tl-done"></span>
+              <span class="grow-tl-label">Day 3</span>
+              <span class="grow-tl-text">반복 패턴 감지 시작</span>
+            </div>
+            <div class="grow-tl-item">
+              <span class="grow-tl-dot grow-tl-active"></span>
+              <span class="grow-tl-label">1주일 후</span>
+              <span class="grow-tl-text">AI가 먼저 자동화 제안</span>
+            </div>
+            <div class="grow-tl-item">
+              <span class="grow-tl-dot"></span>
+              <span class="grow-tl-label">한달 후</span>
+              <span class="grow-tl-text">나만의 AI 비서 완성</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
 </section>
@@ -405,6 +491,8 @@
           <tr><td>로컬 LLM 지원</td><td>✅</td><td>✅</td><td>❌</td><td>❌</td></tr>
           <tr><td>스킬 갤러리</td><td>✅</td><td>❌</td><td>❌</td><td>❌</td></tr>
           <tr><td>자동 스킬 생성</td><td>✅</td><td>✅</td><td>❌</td><td>❌</td></tr>
+          <tr class="compare-highlight"><td>반복 패턴 → 스킬 자동 제안</td><td>✅</td><td>❌</td><td>❌</td><td>❌</td></tr>
+          <tr class="compare-highlight"><td>주간 관심사 리포트</td><td>✅</td><td>❌</td><td>❌</td><td>❌</td></tr>
           <tr><td>오픈소스</td><td>✅</td><td>✅</td><td>✅</td><td>❌</td></tr>
           <tr><td>무료</td><td>✅</td><td>✅</td><td>✅</td><td>❌</td></tr>
         </tbody>

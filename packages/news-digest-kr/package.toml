@@ -43,5 +43,5 @@ key = "count"
 label = "요약할 기사 수"
 type = "number"
 required = false
-default = 5
+default = "5"
 hint = "요약할 기사 수"

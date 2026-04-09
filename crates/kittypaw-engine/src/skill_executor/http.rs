@@ -49,9 +49,9 @@ pub(super) fn validate_url(url_str: &str, allowed_hosts: &[String]) -> Result<()
 
     // Check allowlist if configured
     if !allowed_hosts.is_empty()
-        && !allowed_hosts
-            .iter()
-            .any(|domain| host == domain.as_str() || host.ends_with(&format!(".{domain}")))
+        && !allowed_hosts.iter().any(|domain| {
+            domain == "*" || host == domain.as_str() || host.ends_with(&format!(".{domain}"))
+        })
     {
         return Err(KittypawError::Sandbox(format!(
             "Http: host '{host}' not in allowed_hosts"
@@ -115,9 +115,19 @@ pub(super) async fn execute_web(
     call: &SkillCall,
     allowed_hosts: &[String],
 ) -> Result<serde_json::Value> {
-    // Disable redirects to prevent SSRF bypass via redirect to internal IPs
+    // Allow redirects for Web.fetch but re-validate each destination against SSRF rules.
+    // Web.search uses its own client (built in web_search_dispatch) so this only affects fetch.
+    let allowed_hosts_arc = allowed_hosts.to_vec();
+    let redirect_policy = reqwest::redirect::Policy::custom(move |attempt| {
+        let url = attempt.url().to_string();
+        if validate_url(&url, &allowed_hosts_arc).is_ok() {
+            attempt.follow()
+        } else {
+            attempt.error(format!("Redirect to blocked URL: {url}"))
+        }
+    });
     let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
+        .redirect(redirect_policy)
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());

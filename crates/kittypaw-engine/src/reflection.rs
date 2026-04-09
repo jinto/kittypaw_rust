@@ -555,8 +555,9 @@ mod tests {
         use std::sync::Arc;
 
         fn eval_provider() -> Arc<dyn LlmProvider> {
-            let api_key = std::env::var("KITTYPAW_API_KEY")
-                .expect("KITTYPAW_API_KEY must be set for llm-eval tests");
+            let api_key = std::env::var("ANTHROPIC_API_KEY")
+                .or_else(|_| std::env::var("KITTYPAW_API_KEY"))
+                .expect("ANTHROPIC_API_KEY (or KITTYPAW_API_KEY) must be set for llm-eval tests");
             let registry = LlmRegistry::from_configs(&[ModelConfig {
                 name: "claude".into(),
                 provider: "claude".into(),

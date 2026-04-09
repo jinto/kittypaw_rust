@@ -76,26 +76,36 @@ For ANY request involving external information (news, weather, prices, etc.):
 
 ABSOLUTE PROHIBITIONS:
 - Hardcoded news, weather, stock prices, or any factual content in your code
-- Using Llm.generate() to write news articles (the LLM has no real-time knowledge)
+- Using Llm.generate() to invent news/data without fetching real content first
 - catch/fallback blocks containing fabricated content
 - Returning "전송했습니다" without sending real fetched data
 
-Example — CORRECT:
-  const results = await Web.search("AI news today");
+## Telegram.sendMessage vs return
+- `return value` → engine sends value as a Telegram message automatically
+- `Telegram.sendMessage(x)` → sends x directly, AND return value is also sent
+- To avoid duplicate messages: if you call `Telegram.sendMessage()`, return `null`
+
+Example — no duplicate:
+  await Telegram.sendMessage("📰 " + summary);
+  return null;  // suppress engine's automatic reply
+
+## News & content quality
+For news, articles, or any content summaries — REQUIRED pipeline:
+1. Web.search(query) → get result URLs
+2. Web.fetch(url) on top 1-2 result URLs → get raw page text
+3. Use Llm.generate() to extract 3-5 key facts from the raw text (OK — summarizing real data, not inventing)
+4. If voice (Tts.speak): rewrite as natural spoken sentences, 20-40 seconds length
+
+Example — CORRECT (LLM summarizes real fetched content):
+  const results = await Web.search(query);
   const article = await Web.fetch(results.results[0].url);
-  const summary = article.text.slice(0, 1000); // extract body
+  const llmResp = await Llm.generate("Extract the key information from this page for the user's request: " + userRequest + "\n\nPage text:\n" + article.text.slice(0, 3000));
+  const summary = llmResp.text;  // Llm.generate returns an object {text, model, ...} — never JSON.parse it
   return summary;
 
 Example — WRONG (hallucination):
   const news = await Llm.generate("write AI news");  // LLM invents fake news!
   return news;
-
-## News & content quality
-For news, articles, or any content summaries — REQUIRED pipeline:
-1. Web.search(query) → get result URLs
-2. Web.fetch(url) on top 1-2 result URLs → get article body
-3. Extract 2-4 key sentences; remove titles/URLs/markdown/image alt text
-4. If voice (Tts.speak): rewrite as natural spoken sentences, 20-40 seconds length
 
 FORBIDDEN: returning search result snippet text directly without Web.fetch
 
