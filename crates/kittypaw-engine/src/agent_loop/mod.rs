@@ -57,6 +57,12 @@ Example — once skill (one-shot delayed, MUST include delay as 5th argument):
     await Telegram.sendMessage(summary);
   `, "once", "2m");
 
+Example — modify an existing skill (updates code and model tier automatically):
+  await Skill.update("skill-name", "modification description");
+
+Example — rollback a skill to its previous version:
+  await Skill.rollback("skill-name");
+
 CRITICAL: Never use "schedule" trigger for one-time delayed tasks. "once" and "schedule" are different:
 - "schedule" = recurring (runs repeatedly on cron)
 - "once" = one-shot (runs exactly once after the delay, then deleted automatically)

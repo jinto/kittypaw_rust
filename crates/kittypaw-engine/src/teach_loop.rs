@@ -139,6 +139,8 @@ The `ctx` object contains:
 - Todo.add(task) / Todo.done(index) / Todo.list() / Todo.clear()
 - Skill.create(name, description, code, triggerType, triggerValue) — Create a skill
 - Skill.list() / Skill.delete(name)
+- Skill.update(name, modification) — Modify an existing skill (auto-saves, updates model tier)
+- Skill.rollback(name) — Restore the previous archived version of a skill
 - Agent.delegate(task) — Delegate a subtask to a sub-agent
 - Moa.query(prompt) — Mixture of Agents: query all models in parallel
 - Image.generate(prompt) — Generate an image, returns {url}
@@ -152,6 +154,22 @@ The `ctx` object contains:
 - Use return to provide a text response to the user
 - Use try/catch for error handling
 - Do NOT use: require(), import, fetch(), Node.js APIs
+"#;
+
+const MODIFY_PROMPT: &str = r#"You are KittyPaw's skill modifier. Rewrite an existing skill to incorporate the requested change.
+
+## Output format
+Write ONLY valid JavaScript (ES2020) code. No markdown fences, no explanations.
+Your code must be a single async function body that will be wrapped as:
+  async function(ctx) { YOUR_CODE_HERE }
+
+## Existing skill code
+{EXISTING_CODE}
+
+## Modification requested
+{MODIFICATION}
+
+Apply the modification while preserving the rest of the existing behavior. Return the updated code only.
 "#;
 
 pub enum TeachResult {
@@ -302,6 +320,40 @@ pub fn approve_skill(result: &TeachResult) -> Result<()> {
             "Cannot approve a failed result: {e}"
         ))),
     }
+}
+
+/// Modify an existing skill based on a natural language change request.
+///
+/// Generates updated JS code via LLM with the existing code as context,
+/// updates model_tier via classify_tier, and saves (auto-archiving the old version).
+pub async fn handle_modify(
+    name: &str,
+    modification: &str,
+    existing_code: &str,
+    provider: &dyn LlmProvider,
+) -> Result<()> {
+    let prompt = MODIFY_PROMPT
+        .replace("{EXISTING_CODE}", existing_code)
+        .replace("{MODIFICATION}", modification);
+
+    let messages = vec![LlmMessage {
+        role: Role::User,
+        content: prompt,
+    }];
+
+    let raw_code = provider.generate(&messages).await?.content;
+    let new_code = strip_code_fences(&raw_code);
+    validate_generated_code(&new_code)?;
+
+    let (mut skill, _) = kittypaw_core::skill::load_skill(name)?
+        .ok_or_else(|| KittypawError::Skill(format!("Skill '{name}' not found")))?;
+
+    skill.model_tier = Some(classify_tier(modification));
+    skill.updated_at = now_iso8601();
+
+    kittypaw_core::skill::save_skill(&skill, &new_code)?;
+    tracing::info!(name = name, "Skill modified via handle_modify");
+    Ok(())
 }
 
 fn slugify_description(text: &str) -> String {

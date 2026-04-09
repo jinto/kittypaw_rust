@@ -620,7 +620,7 @@ async fn execute_single_call(
         "Shell" => shell::execute_shell(call).await,
         "Git" => git::execute_git(call).await,
         "Agent" => agent::execute_agent(call, config).await,
-        "Skill" => skill_mgmt::execute_skill_mgmt(call).await,
+        "Skill" => skill_mgmt::execute_skill_mgmt(call, config).await,
         "Tts" => tts::execute_tts(call, config).await,
         "Moa" => moa::execute_moa(call, config).await,
         "Image" => image::execute_image(call, config).await,

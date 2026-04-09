@@ -1,8 +1,12 @@
+use kittypaw_core::config::Config;
 use kittypaw_core::error::{KittypawError, Result};
 use kittypaw_core::skill::{Skill, SkillFormat, SkillPermissions, SkillTrigger};
 use kittypaw_core::types::SkillCall;
 
-pub(super) async fn execute_skill_mgmt(call: &SkillCall) -> Result<serde_json::Value> {
+pub(super) async fn execute_skill_mgmt(
+    call: &SkillCall,
+    config: &Config,
+) -> Result<serde_json::Value> {
     match call.method.as_str() {
         "create" => {
             let name = call.args.first().and_then(|v| v.as_str()).unwrap_or("");
@@ -132,9 +136,83 @@ pub(super) async fn execute_skill_mgmt(call: &SkillCall) -> Result<serde_json::V
             tracing::info!(name = name, "Skill deleted by LLM");
             Ok(serde_json::json!({"ok": true}))
         }
+        "update" => {
+            let name = call.args.first().and_then(|v| v.as_str()).unwrap_or("");
+            let modification = call.args.get(1).and_then(|v| v.as_str()).unwrap_or("");
+            if name.is_empty() {
+                return Err(KittypawError::Sandbox(
+                    "Skill.update: name is required".into(),
+                ));
+            }
+            if modification.is_empty() {
+                return Err(KittypawError::Sandbox(
+                    "Skill.update: modification description is required".into(),
+                ));
+            }
+            let (_, existing_code) = kittypaw_core::skill::load_skill(name)?.ok_or_else(|| {
+                KittypawError::Sandbox(format!("Skill.update: skill '{name}' not found"))
+            })?;
+
+            let registry = build_llm_registry(config);
+            let provider = registry.default_provider().ok_or_else(|| {
+                KittypawError::Sandbox("Skill.update: no LLM provider configured".into())
+            })?;
+
+            crate::teach_loop::handle_modify(name, modification, &existing_code, provider.as_ref())
+                .await?;
+            tracing::info!(
+                name = name,
+                modification = modification,
+                "Skill updated by LLM"
+            );
+            Ok(serde_json::json!({"ok": true, "name": name}))
+        }
+        "rollback" => {
+            let name = call.args.first().and_then(|v| v.as_str()).unwrap_or("");
+            if name.is_empty() {
+                return Err(KittypawError::Sandbox(
+                    "Skill.rollback: name is required".into(),
+                ));
+            }
+            kittypaw_core::skill::rollback_skill(name)?;
+            tracing::info!(name = name, "Skill rolled back by LLM");
+            Ok(serde_json::json!({"ok": true, "name": name}))
+        }
         _ => Err(KittypawError::Sandbox(format!(
             "Unknown Skill method: {}",
             call.method
         ))),
+    }
+}
+
+/// Build an LlmRegistry from config — handles both [[models]] and legacy [llm] sections.
+fn build_llm_registry(config: &Config) -> kittypaw_llm::registry::LlmRegistry {
+    if !config.models.is_empty() {
+        let mut models = config.models.clone();
+        if !config.llm.api_key.is_empty() {
+            for model in &mut models {
+                if model.api_key.is_empty()
+                    && matches!(model.provider.as_str(), "claude" | "anthropic" | "openai")
+                {
+                    model.api_key = config.llm.api_key.clone();
+                }
+            }
+        }
+        kittypaw_llm::registry::LlmRegistry::from_configs(&models)
+    } else if !config.llm.api_key.is_empty() {
+        let legacy = kittypaw_core::config::ModelConfig {
+            name: config.llm.provider.clone(),
+            provider: config.llm.provider.clone(),
+            model: config.llm.model.clone(),
+            api_key: config.llm.api_key.clone(),
+            max_tokens: config.llm.max_tokens,
+            default: true,
+            base_url: None,
+            context_window: None,
+            tier: None,
+        };
+        kittypaw_llm::registry::LlmRegistry::from_configs(&[legacy])
+    } else {
+        kittypaw_llm::registry::LlmRegistry::new()
     }
 }

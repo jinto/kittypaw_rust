@@ -421,6 +421,55 @@ pub fn delete_skill(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Restore the most recently archived version of a skill.
+///
+/// Archives the current version first, then writes the previous version back as active.
+/// Returns an error if no archived version exists.
+pub fn rollback_skill(name: &str) -> Result<()> {
+    let safe_name = sanitize_name(name)?;
+    rollback_skill_in(&skills_dir(), &safe_name)
+}
+
+fn rollback_skill_in(dir: &Path, safe_name: &str) -> Result<()> {
+    let archive_dir = dir.join(".archive");
+
+    let (toml_path, js_path) =
+        find_latest_archive_paths(&archive_dir, safe_name).ok_or_else(|| {
+            KittypawError::Skill(format!("No archived version found for skill '{safe_name}'"))
+        })?;
+
+    let toml_str = std::fs::read_to_string(&toml_path)?;
+    let skill: Skill = toml::from_str(&toml_str)
+        .map_err(|e| KittypawError::Skill(format!("Invalid archive TOML: {e}")))?;
+    let js = std::fs::read_to_string(&js_path)?;
+
+    // save_skill_in auto-archives the current version before writing
+    save_skill_in(dir, &skill, &js)
+}
+
+fn find_latest_archive_paths(archive_dir: &Path, safe_name: &str) -> Option<(PathBuf, PathBuf)> {
+    let entries = std::fs::read_dir(archive_dir).ok()?;
+    let prefix = format!("{safe_name}.v");
+    let suffix = ".skill.toml";
+
+    let mut max_version: Option<u32> = None;
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let s = file_name.to_str()?;
+        if s.starts_with(&prefix) && s.ends_with(suffix) {
+            let mid = &s[prefix.len()..s.len() - suffix.len()];
+            if let Ok(v) = mid.parse::<u32>() {
+                max_version = Some(max_version.map_or(v, |cur| cur.max(v)));
+            }
+        }
+    }
+
+    let v = max_version?;
+    let toml = archive_dir.join(format!("{safe_name}.v{v}.skill.toml"));
+    let js = archive_dir.join(format!("{safe_name}.v{v}.js"));
+    Some((toml, js))
+}
+
 /// Check if a skill's trigger matches the given event text.
 ///
 /// - `"message"` triggers match if `event_text` contains the keyword (case-insensitive).
@@ -583,6 +632,83 @@ mod tests {
         let all = load_all_skills_in(&dir).unwrap();
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].0.model_tier, Some(ModelTier::Automation));
+    }
+
+    #[test]
+    fn test_rollback_skill_restores_previous_version() {
+        let tmp = TempDir::new().unwrap();
+        let dir = make_skills_dir(&tmp);
+
+        // Save v1
+        let skill_v1 = make_test_skill("weather", 1);
+        save_skill_in(&dir, &skill_v1, "// v1 code").unwrap();
+
+        // Save v2 (archives v1)
+        let skill_v2 = Skill {
+            version: 2,
+            description: "v2 description".into(),
+            ..make_test_skill("weather", 2)
+        };
+        save_skill_in(&dir, &skill_v2, "// v2 code").unwrap();
+
+        // Verify v2 is active
+        let (active, js) = load_skill_in(&dir, "weather").unwrap().unwrap();
+        assert_eq!(active.version, 2);
+        assert_eq!(js, "// v2 code");
+
+        // Rollback → should restore v1
+        rollback_skill_in(&dir, "weather").unwrap();
+
+        let (restored, js) = load_skill_in(&dir, "weather").unwrap().unwrap();
+        assert_eq!(restored.version, 1);
+        assert_eq!(js, "// v1 code");
+    }
+
+    #[test]
+    fn test_rollback_skill_no_archive_returns_error() {
+        let tmp = TempDir::new().unwrap();
+        let dir = make_skills_dir(&tmp);
+
+        let skill = make_test_skill("new-skill", 1);
+        save_skill_in(&dir, &skill, "// code").unwrap();
+
+        // No archive exists yet → error
+        let result = rollback_skill_in(&dir, "new-skill");
+        assert!(result.is_err(), "rollback with no archive should fail");
+    }
+
+    #[test]
+    fn test_rollback_picks_highest_archived_version() {
+        let tmp = TempDir::new().unwrap();
+        let dir = make_skills_dir(&tmp);
+
+        // Create v1 → v2 → v3 chain
+        save_skill_in(&dir, &make_test_skill("multi", 1), "// v1").unwrap();
+        save_skill_in(
+            &dir,
+            &Skill {
+                version: 2,
+                ..make_test_skill("multi", 2)
+            },
+            "// v2",
+        )
+        .unwrap();
+        save_skill_in(
+            &dir,
+            &Skill {
+                version: 3,
+                ..make_test_skill("multi", 3)
+            },
+            "// v3",
+        )
+        .unwrap();
+
+        // Rollback: should pick v2 (highest in archive)
+        rollback_skill_in(&dir, "multi").unwrap();
+
+        let (restored, js) = load_skill_in(&dir, "multi").unwrap().unwrap();
+        assert_eq!(restored.version, 2);
+        assert_eq!(js, "// v2");
     }
 
     #[test]

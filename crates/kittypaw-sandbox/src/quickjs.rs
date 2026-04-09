@@ -47,7 +47,7 @@ pub(crate) const KNOWN_SKILLS: &[(&str, &[&str])] = &[
     ("Shell", &["exec"]),
     ("Git", &["status", "diff", "log", "commit"]),
     ("Agent", &["delegate"]),
-    ("Skill", &["create", "list", "delete"]),
+    ("Skill", &["create", "list", "delete", "update", "rollback"]),
     ("Tts", &["speak"]),
     ("Memory", &["save", "recall", "search", "user"]),
     ("Moa", &["query"]),
