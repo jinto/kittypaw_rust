@@ -94,6 +94,7 @@ pub(super) async fn execute_skill_mgmt(call: &SkillCall) -> Result<serde_json::V
                     allowed_hosts: vec![],
                 },
                 format: SkillFormat::Native,
+                model_tier: None,
             };
 
             kittypaw_core::skill::save_skill(&skill, code)?;

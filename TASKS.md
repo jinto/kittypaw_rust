@@ -128,9 +128,47 @@
 
 ## v3 잔여
 
-- [ ] teach loop 키워드 분류기 (automation→경량, analysis→중간)
 - [ ] 대화 중 자동 모델 교체
 - [ ] 자연어 자동화 조합 (기존 스킬 커스터마이즈)
+
+---
+
+## ModelTier-based Llm.generate() Routing ✅
+
+> 스펙: `.ina/specs/20260409-1536-think-model-tier-routing.md`
+> 플랜: `.claude/plans/model-tier-routing.md`
+
+### Task 1: ModelTier enum + Skill.model_tier 필드 ✅
+- [x] **T1-T** 실패 테스트 2개: `skill_toml_roundtrip_with_tier`, `skill_toml_without_tier_is_none`
+- [x] **T1** 구현: `ModelTier` enum + `Skill.model_tier: Option<ModelTier>`
+- [x] **T1-V** `cargo test -p kittypaw-core -- skill` 통과
+
+### Task 2: classify_tier() 구현 ✅
+- [x] **T2-T** 실패 테스트 6개: 스펙 수락 기준 케이스 전부
+- [x] **T2** 구현: `pub fn classify_tier(text: &str) -> ModelTier` + 키워드 상수
+- [x] **T2-V** `cargo test -p kittypaw-engine -- classify_tier` 통과
+
+### Task 3: tier_model_name() + approve_skill 연결 ✅
+- [x] **T3-T** 실패 테스트 4개: feature gate off / Analysis / Automation 2모델 / 1모델
+- [x] **T3** 구현: `pub fn tier_model_name(tier, config) -> Option<String>` + `approve_skill` 수정
+- [x] **T3-V** `cargo test -p kittypaw-engine -- tier_model_name` 통과
+
+### Task 4: resolve_skill_call_with_model (wrapper) ✅
+- [x] **T4-T** 실패 테스트: `resolve_skill_call_with_model_passes_override_to_llm`
+- [x] **T4** 구현: `resolve_skill_call_inner`에 `model_override` 추가 + `resolve_skill_call_with_model` 래퍼
+- [x] **T4-V** `cargo test -p kittypaw-engine -- skill_executor` 통과
+
+### Task 5: agent_loop 두 호출 지점 주입 ✅
+- [x] **T5** 구현: `execute_skill_code` +`model_override` + line~192(메시지트리거) + line~255(run_skill_by_name) 수정
+- [x] **T5-V** `cargo build -p kittypaw-engine` 컴파일 통과
+
+### Task 6: schedule 경로 주입 ✅
+- [x] **T6** 구현: `tier_model_name` 계산 후 `resolve_skill_call_with_model` 사용
+- [x] **T6-V** `cargo test -p kittypaw-engine -- schedule` 통과
+
+### Task 7: 전체 통과 ✅
+- [x] **T7** `cargo test --workspace` 전체 통과 (0 failed)
+- [x] **T7-L** `cargo clippy --workspace` 에러 0
 
 ### Web.search 무설정 기본값 + 폴백 체인 ✅
 > 플랜: .claude/plans/web-search-fallback-chain.md | 리서치: docs/20260409-1500-research-agent-web-search.md
@@ -167,7 +205,7 @@ Plan: `.claude/plans/adaptive-engine.md`
 
 ---
 
-## Wow #3: 적응형 취향 반영 (Adaptive Preference) ← 현재
+## Wow #3: 적응형 취향 반영 (Adaptive Preference) ✅
 
 Plan: `.claude/plans/adaptive-preference.md`
 

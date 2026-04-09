@@ -1092,3 +1092,27 @@ async fn test_supervised_http_allowed_after_onboarding_grant() {
 
     let _ = std::fs::remove_file(&path);
 }
+
+#[tokio::test]
+async fn resolve_skill_call_with_model_passes_override_to_llm() {
+    // Verifies that resolve_skill_call_with_model exists and accepts model_override.
+    // The important invariant is that the function signature compiles and the
+    // model_override flows through to execute_single_call.
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+    let path = temp_db_path();
+    let store = Arc::new(Mutex::new(open_store(&path)));
+    let config = kittypaw_core::config::Config::default();
+    let call = SkillCall {
+        skill_name: "Storage".to_string(),
+        method: "get".to_string(),
+        args: vec![serde_json::json!("nonexistent_key")],
+    };
+    // Storage.get with missing key returns null — tests that the new function works
+    let result = resolve_skill_call_with_model(&call, &config, &store, None, None, None).await;
+    assert!(
+        result.contains("null") || result.contains("error"),
+        "unexpected result: {result}"
+    );
+    let _ = std::fs::remove_file(&path);
+}

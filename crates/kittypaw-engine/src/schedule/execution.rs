@@ -233,6 +233,9 @@ pub async fn execute_scheduled_skill(
     let wrapped = format!("const ctx = JSON.parse(__context__);\n{js_code}");
     let started_at = Utc::now();
 
+    // Resolve tier-based model override before building the closure.
+    let tier_model = crate::teach_loop::tier_model_name(skill.model_tier.clone(), config);
+
     // Build inline skill resolver so Http/Web/Telegram/etc. work during execution.
     // M-1 fix: checker created ONCE here (outside the closure) so call_timestamps accumulate
     // across all resolver invocations within a single execution, enforcing rate limits correctly.
@@ -246,18 +249,20 @@ pub async fn execute_scheduled_skill(
             let config = config_clone.clone();
             let db_path = db_path_str.clone();
             let checker = skill_checker.clone();
+            let model_override = tier_model.clone();
             Box::pin(async move {
                 let store = match kittypaw_store::Store::open(&db_path) {
                     Ok(s) => s,
                     Err(_) => return "null".to_string(),
                 };
                 let store = std::sync::Arc::new(tokio::sync::Mutex::new(store));
-                crate::skill_executor::resolve_skill_call(
+                crate::skill_executor::resolve_skill_call_with_model(
                     &call,
                     &config,
                     &store,
                     Some(&checker),
                     None,
+                    model_override.as_deref(),
                 )
                 .await
             })

@@ -188,8 +188,46 @@ pub async fn resolve_skill_call_with_mcp(
     on_permission: Option<&PermissionCallback>,
     mcp_registry: Option<&Arc<tokio::sync::Mutex<crate::mcp_registry::McpRegistry>>>,
 ) -> String {
-    let result =
-        resolve_skill_call_inner(call, config, store, checker, on_permission, mcp_registry).await;
+    let result = resolve_skill_call_inner(
+        call,
+        config,
+        store,
+        checker,
+        on_permission,
+        mcp_registry,
+        None,
+    )
+    .await;
+    if result.len() > MAX_SKILL_RESULT_BYTES {
+        return skill_error_json(format!(
+            "Result too large ({} bytes, limit {})",
+            result.len(),
+            MAX_SKILL_RESULT_BYTES
+        ));
+    }
+    result
+}
+
+/// Like `resolve_skill_call` but with an explicit model override for LLM calls.
+/// Used by the schedule path to inject tier-based model selection.
+pub(crate) async fn resolve_skill_call_with_model(
+    call: &SkillCall,
+    config: &kittypaw_core::config::Config,
+    store: &Arc<Mutex<Store>>,
+    checker: Option<&Arc<std::sync::Mutex<CapabilityChecker>>>,
+    on_permission: Option<&PermissionCallback>,
+    model_override: Option<&str>,
+) -> String {
+    let result = resolve_skill_call_inner(
+        call,
+        config,
+        store,
+        checker,
+        on_permission,
+        None,
+        model_override,
+    )
+    .await;
     if result.len() > MAX_SKILL_RESULT_BYTES {
         return skill_error_json(format!(
             "Result too large ({} bytes, limit {})",
@@ -207,6 +245,7 @@ async fn resolve_skill_call_inner(
     checker: Option<&Arc<std::sync::Mutex<CapabilityChecker>>>,
     on_permission: Option<&PermissionCallback>,
     mcp_registry: Option<&Arc<tokio::sync::Mutex<crate::mcp_registry::McpRegistry>>>,
+    model_override: Option<&str>,
 ) -> String {
     if let Some(cap) = checker {
         match cap.lock() {
@@ -318,7 +357,7 @@ async fn resolve_skill_call_inner(
         config,
         None,
         &llm_call_count,
-        None,
+        model_override,
         on_permission,
         http_network_granted,
     )

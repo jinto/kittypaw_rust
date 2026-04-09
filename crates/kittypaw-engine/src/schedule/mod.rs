@@ -311,6 +311,7 @@ mod tests {
                 allowed_hosts: vec![],
             },
             format: kittypaw_core::skill::SkillFormat::Native,
+            model_tier: None,
         }
     }
 
@@ -334,6 +335,7 @@ mod tests {
                 allowed_hosts: vec![],
             },
             format: kittypaw_core::skill::SkillFormat::Native,
+            model_tier: None,
         }
     }
 

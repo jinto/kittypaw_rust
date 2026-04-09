@@ -1,10 +1,90 @@
 use kittypaw_core::config::Config;
 use kittypaw_core::error::{KittypawError, Result};
-use kittypaw_core::skill::{Skill, SkillPermissions, SkillTrigger};
+use kittypaw_core::skill::{ModelTier, Skill, SkillPermissions, SkillTrigger};
 use kittypaw_core::types::{LlmMessage, Role};
 use kittypaw_llm::provider::LlmProvider;
 use kittypaw_llm::util::strip_code_fences;
 use kittypaw_sandbox::sandbox::Sandbox;
+
+const ANALYSIS_KEYWORDS: &[&str] = &[
+    "분석",
+    "요약",
+    "리포트",
+    "비교",
+    "정리",
+    "추세",
+    "검토",
+    "파악",
+    "analyze",
+    "summary",
+    "summarize",
+    "report",
+    "compare",
+    "review",
+    "research",
+];
+
+const AUTOMATION_KEYWORDS: &[&str] = &[
+    "알림",
+    "스케줄",
+    "매일",
+    "매주",
+    "마다",
+    "보내줘",
+    "전송",
+    "예약",
+    "schedule",
+    "daily",
+    "weekly",
+    "every",
+    "remind",
+    "send",
+    "notify",
+    "alert",
+];
+
+/// Classify skill intent: Analysis keywords win on conflict (upward bias).
+/// Default is Analysis for unknown inputs.
+pub fn classify_tier(text: &str) -> ModelTier {
+    let lower = text.to_lowercase();
+    if ANALYSIS_KEYWORDS.iter().any(|k| lower.contains(k)) {
+        tracing::debug!("classify_tier: {:?} → Analysis", text);
+        return ModelTier::Analysis;
+    }
+    if AUTOMATION_KEYWORDS.iter().any(|k| lower.contains(k)) {
+        tracing::debug!("classify_tier: {:?} → Automation", text);
+        return ModelTier::Automation;
+    }
+    tracing::debug!("classify_tier: {:?} → Analysis (default)", text);
+    ModelTier::Analysis
+}
+
+/// Resolve the model name override for a given tier.
+///
+/// Returns `None` when:
+/// - `model_routing` feature gate is off (existing behaviour preserved)
+/// - tier is `Analysis` (use the default model)
+/// - tier is `Automation` but only one model is configured (graceful degradation)
+pub fn tier_model_name(tier: Option<ModelTier>, config: &Config) -> Option<String> {
+    if !config.features.model_routing {
+        return None;
+    }
+    match tier.unwrap_or_default() {
+        ModelTier::Analysis => None,
+        ModelTier::Automation => {
+            let default_name = config
+                .models
+                .iter()
+                .find(|m| m.default)
+                .map(|m| m.name.as_str());
+            config
+                .models
+                .iter()
+                .find(|m| Some(m.name.as_str()) != default_name)
+                .map(|m| m.name.clone())
+        }
+    }
+}
 
 const TEACH_PROMPT: &str = r#"You are KittyPaw's skill generator. The user describes an automation they want, and you write a reusable JavaScript skill.
 
@@ -200,6 +280,7 @@ pub fn approve_skill(result: &TeachResult) -> Result<()> {
                     allowed_hosts: vec![],
                 },
                 format: kittypaw_core::skill::SkillFormat::Native,
+                model_tier: Some(classify_tier(description)),
             };
             kittypaw_core::skill::save_skill(&skill, code)?;
             tracing::info!("Skill '{}' saved successfully", skill_name);
@@ -515,5 +596,129 @@ mod tests {
         assert!(parse_once_delay("abc").is_err());
         assert!(parse_once_delay("").is_err());
         assert!(parse_once_delay("2s").is_err(), "seconds not supported");
+    }
+
+    #[test]
+    fn classify_tier_analysis_keyword_wins() {
+        use kittypaw_core::skill::ModelTier;
+        // 요약 키워드 → Analysis
+        assert_eq!(classify_tier("뉴스 요약해서 보내줘"), ModelTier::Analysis);
+    }
+
+    #[test]
+    fn classify_tier_automation_keyword() {
+        use kittypaw_core::skill::ModelTier;
+        assert_eq!(
+            classify_tier("매일 아침 날씨 알림 보내줘"),
+            ModelTier::Automation
+        );
+    }
+
+    #[test]
+    fn classify_tier_conflict_analysis_wins() {
+        use kittypaw_core::skill::ModelTier;
+        // 분석 + 보내줘 → Analysis 우선
+        assert_eq!(classify_tier("분석해서 보내줘"), ModelTier::Analysis);
+    }
+
+    #[test]
+    fn classify_tier_default_analysis() {
+        use kittypaw_core::skill::ModelTier;
+        assert_eq!(classify_tier("안녕"), ModelTier::Analysis);
+    }
+
+    #[test]
+    fn classify_tier_mixed_language_analysis_wins() {
+        use kittypaw_core::skill::ModelTier;
+        // "every day" + "요약" → Analysis 우선
+        assert_eq!(classify_tier("every day 요약"), ModelTier::Analysis);
+    }
+
+    #[test]
+    fn classify_tier_mixed_conflict_analysis_wins() {
+        use kittypaw_core::skill::ModelTier;
+        // "analyze" + "보내줘" → Analysis 우선
+        assert_eq!(classify_tier("analyze and 보내줘"), ModelTier::Analysis);
+    }
+
+    fn two_model_config(routing: bool) -> Config {
+        use kittypaw_core::config::{FeatureFlags, ModelConfig};
+        Config {
+            models: vec![
+                ModelConfig {
+                    name: "default-model".into(),
+                    provider: "openai".into(),
+                    model: "gpt-4".into(),
+                    api_key: "key".into(),
+                    max_tokens: 1000,
+                    default: true,
+                    base_url: None,
+                    context_window: None,
+                },
+                ModelConfig {
+                    name: "fast-model".into(),
+                    provider: "openai".into(),
+                    model: "gpt-3.5-turbo".into(),
+                    api_key: "key".into(),
+                    max_tokens: 1000,
+                    default: false,
+                    base_url: None,
+                    context_window: None,
+                },
+            ],
+            features: FeatureFlags {
+                model_routing: routing,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn tier_model_name_feature_gate_off_returns_none() {
+        use kittypaw_core::skill::ModelTier;
+        let config = two_model_config(false);
+        assert_eq!(tier_model_name(Some(ModelTier::Automation), &config), None);
+    }
+
+    #[test]
+    fn tier_model_name_analysis_returns_none() {
+        use kittypaw_core::skill::ModelTier;
+        let config = two_model_config(true);
+        assert_eq!(tier_model_name(Some(ModelTier::Analysis), &config), None);
+    }
+
+    #[test]
+    fn tier_model_name_automation_two_models_returns_fallback() {
+        use kittypaw_core::skill::ModelTier;
+        let config = two_model_config(true);
+        assert_eq!(
+            tier_model_name(Some(ModelTier::Automation), &config),
+            Some("fast-model".to_string())
+        );
+    }
+
+    #[test]
+    fn tier_model_name_automation_one_model_returns_none() {
+        use kittypaw_core::config::{FeatureFlags, ModelConfig};
+        use kittypaw_core::skill::ModelTier;
+        let config = Config {
+            models: vec![ModelConfig {
+                name: "only-model".into(),
+                provider: "openai".into(),
+                model: "gpt-4".into(),
+                api_key: "key".into(),
+                max_tokens: 1000,
+                default: true,
+                base_url: None,
+                context_window: None,
+            }],
+            features: FeatureFlags {
+                model_routing: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(tier_model_name(Some(ModelTier::Automation), &config), None);
     }
 }

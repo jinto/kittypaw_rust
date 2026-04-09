@@ -188,6 +188,7 @@ pub(super) async fn try_handle_command(
             .find(|(skill, _)| skill.enabled && kittypaw_core::skill::match_trigger(skill, trimmed))
         {
             let session_id = event.session_id();
+            let tier_model = crate::teach_loop::tier_model_name(skill.model_tier.clone(), config);
             return Some(
                 execute_skill_code(
                     &js_code,
@@ -198,6 +199,7 @@ pub(super) async fn try_handle_command(
                     sandbox,
                     &store,
                     Some(&skill.permissions),
+                    tier_model.as_deref(),
                 )
                 .await,
             );
@@ -244,6 +246,7 @@ async fn run_skill_by_name(
             code_or_prompt
         };
 
+        let tier_model = crate::teach_loop::tier_model_name(skill.model_tier.clone(), config);
         return execute_skill_code(
             &js_code,
             skill_name,
@@ -253,6 +256,7 @@ async fn run_skill_by_name(
             sandbox,
             store,
             Some(&skill.permissions),
+            tier_model.as_deref(),
         )
         .await;
     }
@@ -333,6 +337,7 @@ async fn execute_skill_code(
     sandbox: &Sandbox,
     store: &Arc<Mutex<Store>>,
     permissions: Option<&kittypaw_core::skill::SkillPermissions>,
+    model_override: Option<&str>,
 ) -> Result<String> {
     let wrapped_code = format!("const ctx = JSON.parse(__context__);\n{js_code}");
     let context = serde_json::json!({
@@ -361,7 +366,7 @@ async fn execute_skill_code(
             preresolved,
             Some(skill_name),
             checker.as_mut(),
-            None,
+            model_override,
             http_network_granted,
         )
         .await;

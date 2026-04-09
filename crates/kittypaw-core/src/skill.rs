@@ -16,6 +16,16 @@ pub enum SkillFormat {
     SkillMd,
 }
 
+/// Execution tier for model routing: Analysis uses the default (stronger) model,
+/// Automation uses a lightweight fallback model when available.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelTier {
+    Automation,
+    #[default]
+    Analysis,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Skill {
     pub name: String,
@@ -28,6 +38,8 @@ pub struct Skill {
     pub permissions: SkillPermissions,
     #[serde(default)]
     pub format: SkillFormat,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_tier: Option<ModelTier>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -258,6 +270,7 @@ fn parse_skill_md(path: &Path) -> Result<Option<(Skill, String)>> {
             allowed_hosts: vec![],
         },
         format: SkillFormat::SkillMd,
+        model_tier: None,
     };
 
     Ok(Some((skill, body)))
@@ -450,6 +463,7 @@ mod tests {
                 allowed_hosts: vec!["example.com".into()],
             },
             format: SkillFormat::Native,
+            model_tier: None,
         }
     }
 
@@ -555,5 +569,47 @@ mod tests {
 
         assert!(!match_trigger(&skill, "hello"));
         assert!(!match_trigger(&skill, "anything"));
+    }
+
+    #[test]
+    fn skill_toml_roundtrip_with_tier() {
+        let tmp = TempDir::new().unwrap();
+        let dir = make_skills_dir(&tmp);
+
+        let mut skill = make_test_skill("tier-skill", 1);
+        skill.model_tier = Some(ModelTier::Automation);
+        save_skill_in(&dir, &skill, "export default () => 'ok';").unwrap();
+
+        let all = load_all_skills_in(&dir).unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].0.model_tier, Some(ModelTier::Automation));
+    }
+
+    #[test]
+    fn skill_toml_without_tier_is_none() {
+        let tmp = TempDir::new().unwrap();
+        let dir = make_skills_dir(&tmp);
+
+        // Write a minimal TOML without model_tier field
+        let toml = r#"name = "old-skill"
+version = 1
+description = "legacy"
+created_at = "2026-01-01T00:00:00Z"
+updated_at = "2026-01-01T00:00:00Z"
+enabled = true
+
+[trigger]
+type = "message"
+keyword = "hi"
+
+[permissions]
+primitives = []
+"#;
+        std::fs::write(dir.join("old-skill.skill.toml"), toml).unwrap();
+        std::fs::write(dir.join("old-skill.js"), "export default () => 'hi';").unwrap();
+
+        let all = load_all_skills_in(&dir).unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].0.model_tier, None);
     }
 }
