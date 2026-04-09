@@ -57,8 +57,10 @@ Example — once skill (one-shot delayed, MUST include delay as 5th argument):
     await Telegram.sendMessage(summary);
   `, "once", "2m");
 
-Example — modify an existing skill (updates code and model tier automatically):
+Example — modify an existing skill (Skill.update involves LLM processing — notify the user first, then call):
+  await Telegram.sendMessage("...");  // notify user in their language
   await Skill.update("skill-name", "modification description");
+  return "...";  // confirm completion in their language
 
 Example — rollback a skill to its previous version:
   await Skill.rollback("skill-name");
