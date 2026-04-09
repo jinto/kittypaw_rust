@@ -111,6 +111,23 @@ describe("webhook message routing", () => {
   });
 });
 
+// ── T-3b: no callbackUrl (sync/test mode) ───────────────────
+
+describe("webhook without callbackUrl (sync mode)", () => {
+  it("returns 200 with a valid Kakao response", async () => {
+    const payload = makePayload({ callbackUrl: undefined });
+    const res = await post(webhookUrl(), payload);
+    expect(res.status).toBe(200);
+
+    const json = await res.json<{
+      version: string;
+      template: { outputs: { simpleText: { text: string } }[] };
+    }>();
+    expect(json.version).toBe("2.0");
+    expect(json.template.outputs[0].simpleText.text).toBeTruthy();
+  });
+});
+
 // ── T-4: unmapped user ──────────────────────────────────────
 
 describe("unmapped user", () => {

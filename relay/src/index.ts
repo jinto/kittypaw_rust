@@ -9,7 +9,7 @@ interface KakaoPayload {
     utterance: string;
     user: { id: string };
   };
-  callbackUrl: string;
+  callbackUrl?: string;
 }
 
 interface StoredMessage {
@@ -78,13 +78,30 @@ async function handleWebhook(
   const userId = payload.userRequest?.user?.id;
   const callbackUrl = payload.callbackUrl;
 
-  if (!actionId || !utterance || !userId || !callbackUrl) {
+  if (!actionId || !utterance || !userId) {
     return new Response("Bad Request: missing required fields", { status: 400 });
   }
 
   // Pairing: 6-digit message → attempt to match a pair code
   if (/^\d{6}$/.test(utterance)) {
     return handlePairing(env, utterance, userId);
+  }
+
+  // No callbackUrl = synchronous test mode (OpenBuilder test tool, or async callback disabled).
+  // Respond immediately — async processing is not possible without a callback URL.
+  if (!callbackUrl) {
+    return Response.json({
+      version: "2.0",
+      template: {
+        outputs: [
+          {
+            simpleText: {
+              text: "KittyPaw 스킬 서버가 정상 동작 중입니다. 오픈빌더에서 비동기 콜백을 활성화하면 AI 응답을 받을 수 있습니다.",
+            },
+          },
+        ],
+      },
+    });
   }
 
   // Routing: look up user → relay token mapping
